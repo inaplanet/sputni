@@ -129,6 +129,7 @@ class RtcManager {
   Future<SignalingMessage> createOffer() async {
     final offer = await _peerConnection!.createOffer();
     await _peerConnection!.setLocalDescription(offer);
+    
 
     return SignalingMessage(
       type: SignalingMessageType.offer,
