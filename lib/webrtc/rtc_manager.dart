@@ -73,23 +73,52 @@ class RtcManager {
     }
   }
 
+  // Future<void> _startLocalCapture() async {
+  //   final mediaConstraints = {
+  //     'audio': false,
+  //     'video': {
+  //       'facingMode': 'environment',
+  //       if (defaultTargetPlatform == TargetPlatform.iOS)
+  //         'mandatory': {
+  //           'minWidth': '640',
+  //           'minHeight': '480',
+  //           'minFrameRate': '24',
+  //         }
+  //       else
+  //         'width': 640,
+  //     },
+  //   };
+
+  //   _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+  //   localRenderer.srcObject = _localStream;
+
+  //   for (final track in _localStream!.getTracks()) {
+  //     await _peerConnection!.addTrack(track, _localStream!);
+  //   }
+  // }
+
   Future<void> _startLocalCapture() async {
+    final devices = await navigator.mediaDevices.enumerateDevices();
+
+    debugPrint('====== RTC DEVICE LIST ======');
+    for (final d in devices) {
+      debugPrint('device: kind=${d.kind} label=${d.label} id=${d.deviceId}');
+    }
+    debugPrint('====== END DEVICE LIST ======');
+
     final mediaConstraints = {
       'audio': false,
-      'video': {
-        'facingMode': 'environment',
-        if (defaultTargetPlatform == TargetPlatform.iOS)
-          'mandatory': {
-            'minWidth': '640',
-            'minHeight': '480',
-            'minFrameRate': '24',
-          }
-        else
-          'width': 640,
-      },
+      'video': true,
     };
 
+    debugPrint('RTC: requesting getUserMedia with constraints: $mediaConstraints');
+
     _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+
+    debugPrint('RTC: local stream created: ${_localStream?.id}');
+    debugPrint('RTC: video tracks = ${_localStream?.getVideoTracks().length}');
+    debugPrint('RTC: audio tracks = ${_localStream?.getAudioTracks().length}');
+
     localRenderer.srcObject = _localStream;
 
     for (final track in _localStream!.getTracks()) {

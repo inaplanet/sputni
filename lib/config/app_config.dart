@@ -17,7 +17,7 @@ class AppConfig {
 
   factory AppConfig.fromEnvironment() {
     return const AppConfig(
-      signalingUrl: String.fromEnvironment('SIGNALING_URL', defaultValue: 'wss://example.com/ws'),
+      signalingUrl: String.fromEnvironment('SIGNALING_URL', defaultValue: 'ws://192.168.0.108:8080/ws'),
       enableTurn: bool.fromEnvironment('ENABLE_TURN', defaultValue: false),
       stunUrl: String.fromEnvironment('STUN_URL', defaultValue: 'stun:stun.l.google.com:19302'),
       turnUrl: String.fromEnvironment('TURN_URL', defaultValue: ''),
