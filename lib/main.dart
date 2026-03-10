@@ -57,7 +57,7 @@ class _HomeScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Alfred-style camera and viewer controls with Azure networking diagnostics.',
+                  'Pair devices and control your environment.',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 24),

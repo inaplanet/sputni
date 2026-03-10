@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../ui/azure_theme.dart';
@@ -138,80 +137,6 @@ class PairingQrCodeCard extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class PairingQrScannerCard extends StatelessWidget {
-  const PairingQrScannerCard({
-    required this.controller,
-    required this.onDetect,
-    required this.title,
-    required this.subtitle,
-    super.key,
-  });
-
-  final MobileScannerController controller;
-  final ValueChanged<String> onDetect;
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(title, style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
-        Text(
-          subtitle,
-          style: Theme.of(
-            context,
-          )
-              .textTheme
-              .bodySmall
-              ?.copyWith(color: AzureTheme.ink.withValues(alpha: 0.65)),
-        ),
-        const SizedBox(height: 16),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(24),
-          child: AspectRatio(
-            aspectRatio: 1,
-            child: DecoratedBox(
-              decoration: const BoxDecoration(color: Color(0xFF081A33)),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  MobileScanner(
-                    controller: controller,
-                    onDetect: (capture) {
-                      for (final barcode in capture.barcodes) {
-                        final rawValue = barcode.rawValue;
-                        if (rawValue != null && rawValue.isNotEmpty) {
-                          onDetect(rawValue);
-                          break;
-                        }
-                      }
-                    },
-                  ),
-                  IgnorePointer(
-                    child: Center(
-                      child: Container(
-                        width: 220,
-                        height: 220,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(28),
-                          border: Border.all(color: Colors.white, width: 3),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
           ),
         ),
       ],

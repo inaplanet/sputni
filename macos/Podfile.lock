@@ -3,8 +3,6 @@ PODS:
     - FlutterMacOS
     - WebRTC-SDK (= 114.5735.10)
   - FlutterMacOS (1.0.0)
-  - mobile_scanner (5.2.3):
-    - FlutterMacOS
   - video_player_avfoundation (0.0.1):
     - Flutter
     - FlutterMacOS
@@ -13,7 +11,6 @@ PODS:
 DEPENDENCIES:
   - flutter_webrtc (from `Flutter/ephemeral/.symlinks/plugins/flutter_webrtc/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
-  - mobile_scanner (from `Flutter/ephemeral/.symlinks/plugins/mobile_scanner/macos`)
   - video_player_avfoundation (from `Flutter/ephemeral/.symlinks/plugins/video_player_avfoundation/darwin`)
 
 SPEC REPOS:
@@ -25,15 +22,12 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/flutter_webrtc/macos
   FlutterMacOS:
     :path: Flutter/ephemeral
-  mobile_scanner:
-    :path: Flutter/ephemeral/.symlinks/plugins/mobile_scanner/macos
   video_player_avfoundation:
     :path: Flutter/ephemeral/.symlinks/plugins/video_player_avfoundation/darwin
 
 SPEC CHECKSUMS:
   flutter_webrtc: 8d46529f47d8108a50eb044e5049985a398d296a
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
-  mobile_scanner: bd1e7cd9b67b442f4d903747f4778e040513f860
   video_player_avfoundation: dd410b52df6d2466a42d28550e33e4146928280a
   WebRTC-SDK: 8c0edd05b880a39648118192c252667ea06dea51
 

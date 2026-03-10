@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../config/app_config.dart';
 import '../config/stream_settings.dart';
@@ -8,7 +11,7 @@ import '../signaling/signaling_message.dart';
 import '../ui/azure_theme.dart';
 import '../utils/app_logger.dart';
 import '../webrtc/rtc_manager.dart';
-import '../widgets/alfred_camera_ui.dart';
+import '../widgets/app_shell_ui.dart';
 import '../widgets/pairing_panel.dart';
 
 class CameraScreen extends StatefulWidget {
@@ -28,6 +31,7 @@ class _CameraScreenState extends State<CameraScreen> {
   PairingMethod _pairingMethod = PairingMethod.roomId;
   String _status = 'Offline';
   String _connectionReport = 'P2P first · waiting to start';
+  String? _recordingPath;
 
   StreamSettings _responsiveSettings(BuildContext context) {
     final size = MediaQuery.of(context).size;
@@ -36,6 +40,7 @@ class _CameraScreenState extends State<CameraScreen> {
         screenWidth: size.width,
         screenHeight: size.height,
         role: StreamViewportRole.camera,
+        preset: _settings.videoQualityPreset,
       ),
     );
   }
@@ -104,15 +109,22 @@ class _CameraScreenState extends State<CameraScreen> {
     };
 
     await rtc.initialize();
+    if (!mounted) return;
+    setState(() {
+      _settings = effectiveSettings;
+      _rtc = rtc;
+      _status = 'Camera ready';
+      _connectionReport = rtc.connectionSummary;
+    });
+
     await signaling.connect();
 
     final offer = await rtc.createOffer();
     signaling.send(offer);
 
+    if (!mounted) return;
     setState(() {
-      _settings = effectiveSettings;
       _signaling = signaling;
-      _rtc = rtc;
       _status = 'Live';
       _connectionReport = rtc.connectionSummary;
     });
@@ -139,7 +151,7 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   Future<void> _openSettings() async {
-    final updatedSettings = await showAlfredSettingsSheet(
+    final updatedSettings = await showSettingsSheet(
       context: context,
       title: 'Camera settings',
       initialSettings: _settings,
@@ -150,6 +162,37 @@ class _CameraScreenState extends State<CameraScreen> {
 
     setState(() => _settings = updatedSettings);
     await _rtc?.updateSettings(updatedSettings);
+  }
+
+  Future<void> _toggleRecording() async {
+    final rtc = _rtc;
+    if (rtc == null) return;
+
+    if (rtc.isRecording) {
+      await rtc.stopRecording();
+      if (!mounted) return;
+      setState(() => _status = 'Recording saved');
+      return;
+    }
+
+    final baseDirectory = await getDownloadsDirectory() ??
+        await getApplicationDocumentsDirectory();
+    final recordingsDirectory = Directory(
+      '${baseDirectory.path}/AetherLinkRecordings',
+    );
+    if (!await recordingsDirectory.exists()) {
+      await recordingsDirectory.create(recursive: true);
+    }
+
+    final filePath =
+        '${recordingsDirectory.path}/camera_${DateTime.now().millisecondsSinceEpoch}.mp4';
+    await rtc.startRecording(filePath);
+
+    if (!mounted) return;
+    setState(() {
+      _recordingPath = filePath;
+      _status = 'Recording';
+    });
   }
 
   @override
@@ -163,6 +206,8 @@ class _CameraScreenState extends State<CameraScreen> {
   @override
   Widget build(BuildContext context) {
     final isStreaming = _rtc != null;
+    final canStart = !isStreaming;
+    final canStop = isStreaming;
     final effectiveSettings = _responsiveSettings(context);
     final pairingPayload = buildPairingPayload(
       roomId: _roomController.text.trim().isEmpty
@@ -172,11 +217,12 @@ class _CameraScreenState extends State<CameraScreen> {
       role: 'camera',
     );
 
-    return AlfredShell(
+    return AppShell(
       title: 'Camera',
-      subtitle: 'Alfred-style live camera controls with Azure P2P preference.',
+      subtitle:
+          'Live camera controls with P2P connection and adaptive capture.',
       hero: SurfacePanel(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -188,6 +234,14 @@ class _CameraScreenState extends State<CameraScreen> {
                       isStreaming ? AzureTheme.success : AzureTheme.azureDark,
                 ),
                 const Spacer(),
+                if (_rtc?.isRecording ?? false)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 8),
+                    child: StatusPill(
+                      label: 'REC',
+                      color: Color(0xFFD7263D),
+                    ),
+                  ),
                 IconButton(
                   onPressed: _openSettings,
                   icon: const Icon(Icons.tune_rounded),
@@ -198,7 +252,7 @@ class _CameraScreenState extends State<CameraScreen> {
             AspectRatio(
               aspectRatio: effectiveSettings.videoProfile.previewAspectRatio,
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(26),
                 child: DecoratedBox(
                   decoration: const BoxDecoration(color: Color(0xFF0A1830)),
                   child: _rtc == null
@@ -221,6 +275,30 @@ class _CameraScreenState extends State<CameraScreen> {
                                 color: Colors.lightBlueAccent
                                     .withValues(alpha: 0.08),
                               ),
+                            Positioned(
+                              left: 12,
+                              bottom: 12,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 7,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.35),
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.12),
+                                  ),
+                                ),
+                                child: Text(
+                                  effectiveSettings.videoProfileLabel,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                 ),
@@ -258,6 +336,11 @@ class _CameraScreenState extends State<CameraScreen> {
                 children: [
                   _InfoChip(label: 'Bitrate ${_settings.bitrateLabel}'),
                   _InfoChip(label: effectiveSettings.videoProfileLabel),
+                  _InfoChip(
+                    label: effectiveSettings.enableMicrophone
+                        ? 'Voice enabled'
+                        : 'Voice disabled',
+                  ),
                   _InfoChip(label: '${_config.stunUrls.length} STUN servers'),
                   _InfoChip(
                     label: _config.hasTurnServer
@@ -289,19 +372,34 @@ class _CameraScreenState extends State<CameraScreen> {
                         color: AzureTheme.ink.withValues(alpha: 0.65),
                       ),
                 ),
+                if (_recordingPath != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Saved to $_recordingPath',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AzureTheme.ink.withValues(alpha: 0.65),
+                        ),
+                  ),
+                ],
               ],
             ),
           ),
       ],
       actions: [
         ElevatedButton(
-          onPressed: _startStreaming,
+          onPressed: canStart ? _startStreaming : null,
           child: const Text('Start live'),
         ),
         OutlinedButton(
-          onPressed: _stopStreaming,
+          onPressed: canStop ? _stopStreaming : null,
           child: const Text('Stop'),
         ),
+        if (isStreaming)
+          OutlinedButton(
+            onPressed: _toggleRecording,
+            child:
+                Text((_rtc?.isRecording ?? false) ? 'Stop rec' : 'Start rec'),
+          ),
       ],
     );
   }

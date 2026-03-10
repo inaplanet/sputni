@@ -23,6 +23,7 @@ class RtcManager {
   StreamSettings _settings;
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
+  MediaRecorder? _mediaRecorder;
   Timer? _turnFallbackTimer;
   bool _isTurnFallbackActive = false;
   bool _isIceRestartInFlight = false;
@@ -38,6 +39,7 @@ class RtcManager {
   void Function(String diagnostics)? onDiagnosticsChanged;
 
   bool get isTurnFallbackActive => _isTurnFallbackActive;
+  bool get isRecording => _mediaRecorder != null;
   String get connectionSummary => _buildConnectionSummary();
 
   Future<void> initialize() async {
@@ -79,6 +81,7 @@ class RtcManager {
     _peerConnection!.onTrack = (RTCTrackEvent event) {
       if (event.streams.isNotEmpty) {
         remoteRenderer.srcObject = event.streams.first;
+        remoteRenderer.muted = false;
       }
     };
 
@@ -124,7 +127,7 @@ class RtcManager {
     debugPrint('====== END DEVICE LIST ======');
 
     final mediaConstraints = {
-      'audio': false,
+      'audio': _settings.enableMicrophone,
       'video': {
         'facingMode': 'environment',
         'width': _settings.videoProfile.width,
@@ -143,6 +146,7 @@ class RtcManager {
     debugPrint('RTC: audio tracks = ${_localStream?.getAudioTracks().length}');
 
     localRenderer.srcObject = _localStream;
+    localRenderer.muted = true;
 
     for (final track in _localStream!.getTracks()) {
       await _peerConnection!.addTrack(track, _localStream!);
@@ -182,7 +186,20 @@ class RtcManager {
   }
 
   Future<void> updateSettings(StreamSettings settings) async {
+    final shouldReconfigureCapture = role == PeerRole.camera &&
+        _localStream != null &&
+        (_settings.enableMicrophone != settings.enableMicrophone ||
+            _settings.videoProfile.width != settings.videoProfile.width ||
+            _settings.videoProfile.height != settings.videoProfile.height ||
+            _settings.videoProfile.frameRate !=
+                settings.videoProfile.frameRate);
+
     _settings = settings;
+
+    if (shouldReconfigureCapture) {
+      await _restartLocalCapture();
+    }
+
     _scheduleTurnFallback();
     await _applyVideoBitrateSettings();
     _emitDiagnostics();
@@ -235,10 +252,42 @@ class RtcManager {
 
   Future<void> dispose() async {
     _turnFallbackTimer?.cancel();
+    await stopRecording();
     await _localStream?.dispose();
     await _peerConnection?.close();
     await localRenderer.dispose();
     await remoteRenderer.dispose();
+  }
+
+  Future<void> startRecording(String path) async {
+    if (role != PeerRole.camera) {
+      throw StateError('Recording is only available in camera mode.');
+    }
+    if (_mediaRecorder != null) return;
+
+    final stream = _localStream;
+    if (stream == null) {
+      throw StateError('Local stream is not initialized.');
+    }
+
+    final videoTracks = stream.getVideoTracks();
+    if (videoTracks.isEmpty) {
+      throw StateError('No local video track available for recording.');
+    }
+
+    final recorder = MediaRecorder();
+    await recorder.start(
+      path,
+      videoTrack: videoTracks.first,
+      audioChannel:
+          _settings.enableMicrophone ? RecorderAudioChannel.INPUT : null,
+    );
+    _mediaRecorder = recorder;
+  }
+
+  Future<void> stopRecording() async {
+    await _mediaRecorder?.stop();
+    _mediaRecorder = null;
   }
 
   void _handlePeerConnectionState(RTCPeerConnectionState state) {
@@ -363,6 +412,77 @@ class RtcManager {
     } catch (error, stackTrace) {
       AppLogger.error(
           'Failed to apply video bitrate settings', error, stackTrace);
+    }
+  }
+
+  Future<void> _restartLocalCapture() async {
+    final peerConnection = _peerConnection;
+    if (peerConnection == null) return;
+
+    final previousStream = _localStream;
+    final updatedStream = await navigator.mediaDevices.getUserMedia({
+      'audio': _settings.enableMicrophone,
+      'video': {
+        'facingMode': 'environment',
+        'width': _settings.videoProfile.width,
+        'height': _settings.videoProfile.height,
+        'frameRate': _settings.videoProfile.frameRate,
+      },
+    });
+
+    final senders = await peerConnection.getSenders();
+    RTCRtpSender? videoSender;
+    RTCRtpSender? audioSender;
+    for (final sender in senders) {
+      if (sender.track?.kind == 'video') {
+        videoSender = sender;
+      } else if (sender.track?.kind == 'audio') {
+        audioSender = sender;
+      }
+    }
+
+    final newVideoTrack = updatedStream.getVideoTracks().isNotEmpty
+        ? updatedStream.getVideoTracks().first
+        : null;
+    final newAudioTrack = updatedStream.getAudioTracks().isNotEmpty
+        ? updatedStream.getAudioTracks().first
+        : null;
+
+    var requiresRenegotiation = false;
+
+    if (newVideoTrack != null) {
+      if (videoSender != null) {
+        await videoSender.replaceTrack(newVideoTrack);
+      } else {
+        await peerConnection.addTrack(newVideoTrack, updatedStream);
+        requiresRenegotiation = true;
+      }
+    }
+
+    if (audioSender != null && newAudioTrack == null) {
+      await peerConnection.removeTrack(audioSender);
+      requiresRenegotiation = true;
+    } else if (audioSender == null && newAudioTrack != null) {
+      await peerConnection.addTrack(newAudioTrack, updatedStream);
+      requiresRenegotiation = true;
+    } else if (audioSender != null && newAudioTrack != null) {
+      await audioSender.replaceTrack(newAudioTrack);
+    }
+
+    _localStream = updatedStream;
+    localRenderer.srcObject = updatedStream;
+    localRenderer.muted = true;
+    await _applyVideoBitrateSettings();
+
+    for (final track
+        in previousStream?.getTracks() ?? const <MediaStreamTrack>[]) {
+      await track.stop();
+    }
+    await previousStream?.dispose();
+
+    if (requiresRenegotiation) {
+      final offer = await createOffer();
+      onSignal?.call(offer);
     }
   }
 

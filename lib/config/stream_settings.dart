@@ -6,6 +6,8 @@ enum VideoFitMode { cover, contain }
 
 enum StreamViewportRole { camera, monitor }
 
+enum VideoQualityPreset { auto, dataSaver, balanced, high }
+
 class VideoProfile {
   const VideoProfile({
     required this.width,
@@ -25,6 +27,7 @@ class VideoProfile {
     required double screenWidth,
     required double screenHeight,
     required StreamViewportRole role,
+    required VideoQualityPreset preset,
   }) {
     final shortestSide =
         screenWidth < screenHeight ? screenWidth : screenHeight;
@@ -34,6 +37,34 @@ class VideoProfile {
     final isLargeDesktop = longestSide >= 1400;
 
     if (role == StreamViewportRole.camera) {
+      if (preset == VideoQualityPreset.dataSaver) {
+        return const VideoProfile(
+          width: 640,
+          height: 360,
+          frameRate: 20,
+          previewAspectRatio: 9 / 16,
+          label: '360p saver',
+        );
+      }
+      if (preset == VideoQualityPreset.balanced) {
+        return const VideoProfile(
+          width: 1280,
+          height: 720,
+          frameRate: 24,
+          previewAspectRatio: 4 / 3,
+          label: '720p balanced',
+        );
+      }
+      if (preset == VideoQualityPreset.high) {
+        return const VideoProfile(
+          width: 1920,
+          height: 1080,
+          frameRate: 30,
+          previewAspectRatio: 16 / 10,
+          label: '1080p high',
+        );
+      }
+
       if (isLargeDesktop) {
         return const VideoProfile(
           width: 1920,
@@ -93,13 +124,13 @@ class StreamSettings {
   const StreamSettings({
     this.preferDirectP2P = true,
     this.enableTurnFallback = true,
+    this.enableMicrophone = false,
     this.maxVideoBitrateKbps = 1200,
     this.lowLightBoost = true,
-    this.activityDetection = true,
-    this.continuousRecording = false,
     this.showConnectionReport = true,
     this.viewerPriority = ViewerPriorityMode.balanced,
     this.videoFit = VideoFitMode.cover,
+    this.videoQualityPreset = VideoQualityPreset.auto,
     this.videoProfile = const VideoProfile(
       width: 960,
       height: 540,
@@ -111,13 +142,13 @@ class StreamSettings {
 
   final bool preferDirectP2P;
   final bool enableTurnFallback;
+  final bool enableMicrophone;
   final int maxVideoBitrateKbps;
   final bool lowLightBoost;
-  final bool activityDetection;
-  final bool continuousRecording;
   final bool showConnectionReport;
   final ViewerPriorityMode viewerPriority;
   final VideoFitMode videoFit;
+  final VideoQualityPreset videoQualityPreset;
   final VideoProfile videoProfile;
 
   static const cameraDefaults = StreamSettings();
@@ -136,25 +167,25 @@ class StreamSettings {
   StreamSettings copyWith({
     bool? preferDirectP2P,
     bool? enableTurnFallback,
+    bool? enableMicrophone,
     int? maxVideoBitrateKbps,
     bool? lowLightBoost,
-    bool? activityDetection,
-    bool? continuousRecording,
     bool? showConnectionReport,
     ViewerPriorityMode? viewerPriority,
     VideoFitMode? videoFit,
+    VideoQualityPreset? videoQualityPreset,
     VideoProfile? videoProfile,
   }) {
     return StreamSettings(
       preferDirectP2P: preferDirectP2P ?? this.preferDirectP2P,
       enableTurnFallback: enableTurnFallback ?? this.enableTurnFallback,
+      enableMicrophone: enableMicrophone ?? this.enableMicrophone,
       maxVideoBitrateKbps: maxVideoBitrateKbps ?? this.maxVideoBitrateKbps,
       lowLightBoost: lowLightBoost ?? this.lowLightBoost,
-      activityDetection: activityDetection ?? this.activityDetection,
-      continuousRecording: continuousRecording ?? this.continuousRecording,
       showConnectionReport: showConnectionReport ?? this.showConnectionReport,
       viewerPriority: viewerPriority ?? this.viewerPriority,
       videoFit: videoFit ?? this.videoFit,
+      videoQualityPreset: videoQualityPreset ?? this.videoQualityPreset,
       videoProfile: videoProfile ?? this.videoProfile,
     );
   }
@@ -170,4 +201,17 @@ class StreamSettings {
 
   String get bitrateLabel => '$maxVideoBitrateKbps kbps';
   String get videoProfileLabel => videoProfile.label;
+
+  String get qualityPresetLabel {
+    switch (videoQualityPreset) {
+      case VideoQualityPreset.auto:
+        return 'Auto';
+      case VideoQualityPreset.dataSaver:
+        return 'Data saver';
+      case VideoQualityPreset.balanced:
+        return 'Balanced';
+      case VideoQualityPreset.high:
+        return 'High';
+    }
+  }
 }

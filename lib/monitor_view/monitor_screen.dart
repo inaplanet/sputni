@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../config/app_config.dart';
 import '../config/stream_settings.dart';
@@ -9,7 +8,7 @@ import '../signaling/signaling_message.dart';
 import '../ui/azure_theme.dart';
 import '../utils/app_logger.dart';
 import '../webrtc/rtc_manager.dart';
-import '../widgets/alfred_camera_ui.dart';
+import '../widgets/app_shell_ui.dart';
 import '../widgets/pairing_panel.dart';
 
 class MonitorScreen extends StatefulWidget {
@@ -26,12 +25,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
   SignalingClient? _signaling;
   RtcManager? _rtc;
   StreamSettings _settings = StreamSettings.monitorDefaults;
-  final MobileScannerController _scannerController = MobileScannerController(
-    detectionSpeed: DetectionSpeed.noDuplicates,
-    facing: CameraFacing.back,
-  );
   PairingMethod _pairingMethod = PairingMethod.roomId;
-  bool _isHandlingScan = false;
   String _status = 'Offline';
   String _connectionReport = 'P2P first · idle';
 
@@ -42,6 +36,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
         screenWidth: size.width,
         screenHeight: size.height,
         role: StreamViewportRole.monitor,
+        preset: _settings.videoQualityPreset,
       ),
     );
   }
@@ -132,65 +127,9 @@ class _MonitorScreenState extends State<MonitorScreen> {
     });
   }
 
-  Future<void> _openSettings() async {
-    final updatedSettings = await showAlfredSettingsSheet(
-      context: context,
-      title: 'Viewer settings',
-      initialSettings: _settings,
-      turnAvailable: _config.hasTurnServer,
-    );
-
-    if (updatedSettings == null || !mounted) return;
-
-    setState(() => _settings = updatedSettings);
-    await _rtc?.updateSettings(updatedSettings);
-  }
-
-  Future<void> _handleQrScan(String rawValue) async {
-    if (_isHandlingScan) return;
-
-    final roomId = parseRoomIdFromPairingPayload(rawValue);
-    if (roomId == null) {
-      if (mounted) {
-        setState(() => _status = 'Invalid QR code');
-      }
-      return;
-    }
-
-    _isHandlingScan = true;
-    try {
-      _roomController.text = roomId;
-      if (mounted) {
-        setState(() {
-          _status = 'QR paired';
-          _pairingMethod = PairingMethod.qrCode;
-        });
-      }
-
-      if (_rtc == null && _signaling == null) {
-        await _connect();
-      }
-    } finally {
-      await Future<void>.delayed(const Duration(seconds: 2));
-      _isHandlingScan = false;
-    }
-  }
-
-  Future<void> _setPairingMethod(PairingMethod method) async {
-    if (_pairingMethod == method) return;
-
-    setState(() => _pairingMethod = method);
-    if (method == PairingMethod.qrCode) {
-      await _scannerController.start();
-    } else {
-      await _scannerController.stop();
-    }
-  }
-
   @override
   void dispose() {
     _roomController.dispose();
-    _scannerController.dispose();
     _signaling?.disconnect();
     _rtc?.dispose();
     super.dispose();
@@ -199,14 +138,22 @@ class _MonitorScreenState extends State<MonitorScreen> {
   @override
   Widget build(BuildContext context) {
     final isConnected = _rtc != null;
+    final canConnect = !isConnected;
+    final canDisconnect = isConnected;
     final effectiveSettings = _responsiveSettings(context);
+    final pairingPayload = buildPairingPayload(
+      roomId: _roomController.text.trim().isEmpty
+          ? 'demo-room'
+          : _roomController.text.trim(),
+      signalingUrl: _config.signalingUrl,
+      role: 'monitor',
+    );
 
-    return AlfredShell(
+    return AppShell(
       title: 'Monitor',
-      subtitle:
-          'Viewer dashboard with Alfred-style controls and Azure status cards.',
+      subtitle: 'Viewer dashboard with controls and connection diagnostics.',
       hero: SurfacePanel(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(14),
         child: Column(
           children: [
             Row(
@@ -216,17 +163,13 @@ class _MonitorScreenState extends State<MonitorScreen> {
                   color: isConnected ? AzureTheme.success : AzureTheme.warning,
                 ),
                 const Spacer(),
-                IconButton(
-                  onPressed: _openSettings,
-                  icon: const Icon(Icons.settings_rounded),
-                ),
               ],
             ),
             const SizedBox(height: 12),
             AspectRatio(
               aspectRatio: _resolvedMonitorAspectRatio(effectiveSettings),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(26),
                 child: DecoratedBox(
                   decoration: const BoxDecoration(color: Color(0xFF081A33)),
                   child: _rtc == null
@@ -248,6 +191,30 @@ class _MonitorScreenState extends State<MonitorScreen> {
                                 color: Colors.lightBlueAccent
                                     .withValues(alpha: 0.08),
                               ),
+                            Positioned(
+                              left: 12,
+                              bottom: 12,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 7,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.35),
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.12),
+                                  ),
+                                ),
+                                child: Text(
+                                  effectiveSettings.videoProfileLabel,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                 ),
@@ -263,23 +230,21 @@ class _MonitorScreenState extends State<MonitorScreen> {
             children: [
               PairingMethodTabs(
                 activeMethod: _pairingMethod,
-                onChanged: (method) {
-                  _setPairingMethod(method);
-                },
+                onChanged: (method) => setState(() => _pairingMethod = method),
               ),
               const SizedBox(height: 16),
               if (_pairingMethod == PairingMethod.roomId)
                 TextField(
                   controller: _roomController,
                   decoration: const InputDecoration(labelText: 'Room ID'),
+                  onChanged: (_) => setState(() {}),
                 )
               else
-                PairingQrScannerCard(
-                  controller: _scannerController,
-                  onDetect: _handleQrScan,
+                PairingQrCodeCard(
+                  payload: pairingPayload,
                   title: 'QR pairing',
                   subtitle:
-                      'Point the monitor camera at the camera screen QR code.',
+                      'Share this monitor pairing code without opening the camera.',
                 ),
               const SizedBox(height: 16),
               Wrap(
@@ -325,11 +290,11 @@ class _MonitorScreenState extends State<MonitorScreen> {
       ],
       actions: [
         ElevatedButton(
-          onPressed: _connect,
+          onPressed: canConnect ? _connect : null,
           child: const Text('Connect'),
         ),
         OutlinedButton(
-          onPressed: _disconnect,
+          onPressed: canDisconnect ? _disconnect : null,
           child: const Text('Disconnect'),
         ),
       ],

@@ -46,6 +46,8 @@ class AzureTheme {
           backgroundColor: azure,
           foregroundColor: Colors.white,
           minimumSize: const Size.fromHeight(56),
+          disabledBackgroundColor: const Color(0xFFBCD8FF),
+          disabledForegroundColor: Colors.white70,
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         ),
@@ -55,6 +57,7 @@ class AzureTheme {
           foregroundColor: ink,
           minimumSize: const Size.fromHeight(56),
           side: const BorderSide(color: Color(0xFFD6E7FF)),
+          disabledForegroundColor: const Color(0xFF89A8D6),
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         ),
