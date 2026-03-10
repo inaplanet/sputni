@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
 
 import 'camera_view/camera_screen.dart';
 import 'monitor_view/monitor_screen.dart';
 import 'routes/app_routes.dart';
+import 'ui/azure_theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,10 +18,7 @@ class AetherLinkApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'AetherLink',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-        useMaterial3: true,
-      ),
+      theme: AzureTheme.theme(),
       initialRoute: AppRoutes.home,
       routes: {
         AppRoutes.home: (_) => const _HomeScreen(),
@@ -36,19 +35,211 @@ class _HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('AetherLink')),
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ElevatedButton(
-              onPressed: () => Navigator.pushNamed(context, AppRoutes.camera),
-              child: const Text('Start as Camera'),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFEAF5FF), Colors.white, Color(0xFFD8EEFF)],
+          ),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'AetherLink',
+                  style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Alfred-style camera and viewer controls with Azure networking diagnostics.',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 24),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final isCompact = constraints.maxWidth < 720;
+                      final cards = [
+                        _RoleCard(
+                          title: 'Camera',
+                          subtitle:
+                              'Send live video with P2P-first ICE and relay fallback only when needed.',
+                          actionLabel: 'Open camera',
+                          assetPath: 'assets/media/cameramode.mp4',
+                          onTap: () =>
+                              Navigator.pushNamed(context, AppRoutes.camera),
+                        ),
+                        _RoleCard(
+                          title: 'Monitor',
+                          subtitle:
+                              'Watch the stream with viewer-focused controls and connection reporting.',
+                          actionLabel: 'Open monitor',
+                          assetPath: 'assets/media/monitormode.mp4',
+                          onTap: () =>
+                              Navigator.pushNamed(context, AppRoutes.monitor),
+                        ),
+                      ];
+
+                      if (isCompact) {
+                        return Column(
+                          children: [
+                            Expanded(child: cards[0]),
+                            const SizedBox(height: 16),
+                            Expanded(child: cards[1]),
+                          ],
+                        );
+                      }
+
+                      return Row(
+                        children: [
+                          Expanded(child: cards[0]),
+                          const SizedBox(width: 16),
+                          Expanded(child: cards[1]),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            ElevatedButton(
-              onPressed: () => Navigator.pushNamed(context, AppRoutes.monitor),
-              child: const Text('Start as Monitor'),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RoleCard extends StatefulWidget {
+  const _RoleCard({
+    required this.title,
+    required this.subtitle,
+    required this.actionLabel,
+    required this.assetPath,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final String actionLabel;
+  final String assetPath;
+  final VoidCallback onTap;
+
+  @override
+  State<_RoleCard> createState() => _RoleCardState();
+}
+
+class _RoleCardState extends State<_RoleCard> {
+  VideoPlayerController? _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeVideo();
+  }
+
+  Future<void> _initializeVideo() async {
+    try {
+      final controller = VideoPlayerController.asset(widget.assetPath);
+      await controller.setLooping(true);
+      await controller.setVolume(0);
+      await controller.initialize();
+      await controller.play();
+
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+
+      setState(() => _controller = controller);
+    } on UnimplementedError {
+      if (mounted) setState(() {});
+    } catch (_) {
+      if (mounted) setState(() {});
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = _controller;
+
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: widget.onTap,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (controller != null && controller.value.isInitialized)
+              FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: controller.value.size.width,
+                  height: controller.value.size.height,
+                  child: VideoPlayer(controller),
+                ),
+              )
+            else
+              Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF0B5DCC), Color(0xFF071A36)],
+                  ),
+                ),
+              ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withValues(alpha: 0.18),
+                    Colors.black.withValues(alpha: 0.28),
+                    Colors.black.withValues(alpha: 0.7),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Spacer(),
+                  Text(
+                    widget.title,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    widget.subtitle,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color: Colors.white.withValues(alpha: 0.88),
+                        ),
+                  ),
+                  const SizedBox(height: 20),
+                  ElevatedButton(
+                    onPressed: widget.onTap,
+                    child: Text(widget.actionLabel),
+                  ),
+                ],
+              ),
             ),
           ],
         ),

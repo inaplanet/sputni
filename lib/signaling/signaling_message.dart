@@ -31,7 +31,8 @@ class SignalingMessage {
     }
 
     final type = _parseType(rawType);
-    final payload = (json['payload'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
+    final payload = (json['payload'] as Map?)?.cast<String, dynamic>() ??
+        <String, dynamic>{};
 
     return SignalingMessage(type: type, payload: payload);
   }

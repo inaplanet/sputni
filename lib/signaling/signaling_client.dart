@@ -49,7 +49,8 @@ class SignalingClient {
         onDone: _handleDisconnect,
       );
     } catch (error, stackTrace) {
-      AppLogger.error('Failed to connect to signaling server', error, stackTrace);
+      AppLogger.error(
+          'Failed to connect to signaling server', error, stackTrace);
       onError?.call(error, stackTrace);
       _scheduleReconnect();
     }
@@ -74,7 +75,8 @@ class SignalingClient {
 
   void _handleRawMessage(dynamic data) {
     if (data is! String) {
-      onError?.call(FormatException('Unexpected signaling payload type: ${data.runtimeType}'));
+      onError?.call(FormatException(
+          'Unexpected signaling payload type: ${data.runtimeType}'));
       return;
     }
 

@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../config/app_config.dart';
+import '../config/stream_settings.dart';
 import '../signaling/signaling_client.dart';
 import '../signaling/signaling_message.dart';
+import '../ui/azure_theme.dart';
 import '../utils/app_logger.dart';
 import '../webrtc/rtc_manager.dart';
+import '../widgets/alfred_camera_ui.dart';
+import '../widgets/pairing_panel.dart';
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -20,7 +24,21 @@ class _CameraScreenState extends State<CameraScreen> {
   late final AppConfig _config;
   SignalingClient? _signaling;
   RtcManager? _rtc;
-  String _status = 'Disconnected';
+  StreamSettings _settings = StreamSettings.cameraDefaults;
+  PairingMethod _pairingMethod = PairingMethod.roomId;
+  String _status = 'Offline';
+  String _connectionReport = 'P2P first · waiting to start';
+
+  StreamSettings _responsiveSettings(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    return _settings.copyWith(
+      videoProfile: VideoProfile.adaptive(
+        screenWidth: size.width,
+        screenHeight: size.height,
+        role: StreamViewportRole.camera,
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -31,11 +49,16 @@ class _CameraScreenState extends State<CameraScreen> {
   Future<void> _startStreaming() async {
     if (_signaling != null || _rtc != null) return;
 
+    final effectiveSettings = _responsiveSettings(context);
     final signaling = SignalingClient(serverUrl: _config.signalingUrl);
-    final rtc = RtcManager(role: PeerRole.camera, config: _config);
+    final rtc = RtcManager(
+      role: PeerRole.camera,
+      config: _config,
+      settings: effectiveSettings,
+    );
 
     signaling.onConnected = () {
-      setState(() => _status = 'Connected to signaling server');
+      setState(() => _status = 'Signaling connected');
       signaling.send(
         SignalingMessage(
           type: SignalingMessageType.join,
@@ -63,25 +86,35 @@ class _CameraScreenState extends State<CameraScreen> {
     };
 
     signaling.onDisconnected = () {
-      if (mounted) setState(() => _status = 'Disconnected');
+      if (mounted) {
+        setState(() => _status = 'Disconnected');
+      }
     };
 
     rtc.onSignal = signaling.send;
     rtc.onConnectionState = (state) {
-      if (mounted) setState(() => _status = 'Peer state: ${state.name}');
+      if (mounted) {
+        setState(() => _status = 'Peer ${state.name}');
+      }
+    };
+    rtc.onDiagnosticsChanged = (diagnostics) {
+      if (mounted) {
+        setState(() => _connectionReport = diagnostics);
+      }
     };
 
     await rtc.initialize();
     await signaling.connect();
 
-    // Camera creates offer once local capture is up.
     final offer = await rtc.createOffer();
     signaling.send(offer);
 
     setState(() {
+      _settings = effectiveSettings;
       _signaling = signaling;
       _rtc = rtc;
-      _status = 'Streaming started';
+      _status = 'Live';
+      _connectionReport = rtc.connectionSummary;
     });
   }
 
@@ -96,11 +129,27 @@ class _CameraScreenState extends State<CameraScreen> {
     await _signaling?.disconnect();
     await _rtc?.dispose();
 
+    if (!mounted) return;
     setState(() {
       _signaling = null;
       _rtc = null;
       _status = 'Stopped';
+      _connectionReport = 'P2P first · idle';
     });
+  }
+
+  Future<void> _openSettings() async {
+    final updatedSettings = await showAlfredSettingsSheet(
+      context: context,
+      title: 'Camera settings',
+      initialSettings: _settings,
+      turnAvailable: _config.hasTurnServer,
+    );
+
+    if (updatedSettings == null || !mounted) return;
+
+    setState(() => _settings = updatedSettings);
+    await _rtc?.updateSettings(updatedSettings);
   }
 
   @override
@@ -113,49 +162,166 @@ class _CameraScreenState extends State<CameraScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Camera')),
-      body: Padding(
+    final isStreaming = _rtc != null;
+    final effectiveSettings = _responsiveSettings(context);
+    final pairingPayload = buildPairingPayload(
+      roomId: _roomController.text.trim().isEmpty
+          ? 'demo-room'
+          : _roomController.text.trim(),
+      signalingUrl: _config.signalingUrl,
+      role: 'camera',
+    );
+
+    return AlfredShell(
+      title: 'Camera',
+      subtitle: 'Alfred-style live camera controls with Azure P2P preference.',
+      hero: SurfacePanel(
         padding: const EdgeInsets.all(12),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            TextField(
-              controller: _roomController,
-              decoration: const InputDecoration(labelText: 'Room ID'),
-            ),
-            const SizedBox(height: 12),
-            Text(_status),
-            const SizedBox(height: 12),
-            Expanded(
-              child: _rtc == null
-                  ? const Center(child: Text('Preview unavailable until started'))
-                  : RTCVideoView(
-                      _rtc!.localRenderer,
-                      mirror: false,
-                      objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-                    ),
-            ),
-            const SizedBox(height: 12),
             Row(
               children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _startStreaming,
-                    child: const Text('Start'),
-                  ),
+                StatusPill(
+                  label: _status,
+                  color:
+                      isStreaming ? AzureTheme.success : AzureTheme.azureDark,
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _stopStreaming,
-                    child: const Text('Stop'),
-                  ),
+                const Spacer(),
+                IconButton(
+                  onPressed: _openSettings,
+                  icon: const Icon(Icons.tune_rounded),
                 ),
               ],
+            ),
+            const SizedBox(height: 12),
+            AspectRatio(
+              aspectRatio: effectiveSettings.videoProfile.previewAspectRatio,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: DecoratedBox(
+                  decoration: const BoxDecoration(color: Color(0xFF0A1830)),
+                  child: _rtc == null
+                      ? const Center(
+                          child: Text(
+                            'Preview unavailable until streaming starts',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                        )
+                      : Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            RTCVideoView(
+                              _rtc!.localRenderer,
+                              mirror: false,
+                              objectFit: effectiveSettings.rtcVideoFit,
+                            ),
+                            if (effectiveSettings.lowLightBoost)
+                              Container(
+                                color: Colors.lightBlueAccent
+                                    .withValues(alpha: 0.08),
+                              ),
+                          ],
+                        ),
+                ),
+              ),
             ),
           ],
         ),
       ),
+      panels: [
+        SurfacePanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              PairingMethodTabs(
+                activeMethod: _pairingMethod,
+                onChanged: (method) => setState(() => _pairingMethod = method),
+              ),
+              const SizedBox(height: 16),
+              if (_pairingMethod == PairingMethod.roomId)
+                TextField(
+                  controller: _roomController,
+                  decoration: const InputDecoration(labelText: 'Room ID'),
+                  onChanged: (_) => setState(() {}),
+                )
+              else
+                PairingQrCodeCard(
+                  payload: pairingPayload,
+                  title: 'QR pairing',
+                  subtitle: 'Scan this code on the monitor to pair instantly.',
+                ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _InfoChip(label: 'Bitrate ${_settings.bitrateLabel}'),
+                  _InfoChip(label: effectiveSettings.videoProfileLabel),
+                  _InfoChip(label: '${_config.stunUrls.length} STUN servers'),
+                  _InfoChip(
+                    label: _config.hasTurnServer
+                        ? 'TURN fallback ready'
+                        : 'TURN disabled',
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (_settings.showConnectionReport)
+          SurfacePanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Connection report',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                Text(_connectionReport),
+                const SizedBox(height: 8),
+                Text(
+                  'TURN is not forced. The app starts with STUN-only gathering and only promotes relay when direct connectivity times out or fails.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AzureTheme.ink.withValues(alpha: 0.65),
+                      ),
+                ),
+              ],
+            ),
+          ),
+      ],
+      actions: [
+        ElevatedButton(
+          onPressed: _startStreaming,
+          child: const Text('Start live'),
+        ),
+        OutlinedButton(
+          onPressed: _stopStreaming,
+          child: const Text('Stop'),
+        ),
+      ],
+    );
+  }
+}
+
+class _InfoChip extends StatelessWidget {
+  const _InfoChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFFD6E7FF)),
+      ),
+      child: Text(label),
     );
   }
 }

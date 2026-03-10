@@ -9,7 +9,8 @@ void main() {
         // channels enabled, instantiate RtcManager and assert callback order.
         expect(true, isTrue);
       },
-      skip: 'Requires flutter_webrtc platform bindings (integration/device test)',
+      skip:
+          'Requires flutter_webrtc platform bindings (integration/device test)',
     );
   });
 }
