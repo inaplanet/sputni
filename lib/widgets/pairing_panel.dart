@@ -46,8 +46,9 @@ class PairingMethodTabs extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: const Color(0xFFE6F1FF),
+        color: Colors.white.withValues(alpha: 0.34),
         borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AzureTheme.glassStroke),
       ),
       child: Row(
         children: PairingMethod.values.map((method) {
@@ -58,14 +59,15 @@ class PairingMethodTabs extends StatelessWidget {
               duration: const Duration(milliseconds: 160),
               curve: Curves.easeOut,
               decoration: BoxDecoration(
-                color: isSelected ? Colors.white : Colors.transparent,
+                color: isSelected
+                    ? Colors.white.withValues(alpha: 0.5)
+                    : Colors.transparent,
                 borderRadius: BorderRadius.circular(14),
               ),
               child: TextButton(
                 onPressed: () => onChanged(method),
                 style: TextButton.styleFrom(
-                  foregroundColor:
-                      isSelected ? AzureTheme.azureDark : AzureTheme.ink,
+                  foregroundColor: AzureTheme.ink,
                 ),
                 child: Text(label),
               ),
@@ -110,9 +112,9 @@ class PairingQrCodeCard extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: Colors.white.withValues(alpha: 0.56),
             borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: const Color(0xFFD7E8FF)),
+            border: Border.all(color: AzureTheme.glassStroke),
           ),
           child: Column(
             children: [

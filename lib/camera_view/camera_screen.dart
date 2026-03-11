@@ -10,6 +10,7 @@ import '../signaling/signaling_client.dart';
 import '../signaling/signaling_message.dart';
 import '../ui/azure_theme.dart';
 import '../utils/app_logger.dart';
+import '../utils/room_security.dart';
 import '../webrtc/rtc_manager.dart';
 import '../widgets/app_shell_ui.dart';
 import '../widgets/pairing_panel.dart';
@@ -22,26 +23,30 @@ class CameraScreen extends StatefulWidget {
 }
 
 class _CameraScreenState extends State<CameraScreen> {
-  final _roomController = TextEditingController(text: 'demo-room');
+  final _roomController = TextEditingController(text: 'first-channel');
 
   late final AppConfig _config;
   SignalingClient? _signaling;
   RtcManager? _rtc;
   StreamSettings _settings = StreamSettings.cameraDefaults;
   PairingMethod _pairingMethod = PairingMethod.roomId;
-  String _status = 'Offline';
+  String _status = 'Standby';
   String _connectionReport = 'P2P first · waiting to start';
   String? _recordingPath;
 
+  String get _resolvedRoomId {
+    final value = _roomController.text.trim();
+    return value.isEmpty ? 'first-channel' : value;
+  }
+
+  String get _transmissionRoomId => secureRoomToken(_resolvedRoomId);
+
   StreamSettings _responsiveSettings(BuildContext context) {
     final size = MediaQuery.of(context).size;
-    return _settings.copyWith(
-      videoProfile: VideoProfile.adaptive(
-        screenWidth: size.width,
-        screenHeight: size.height,
-        role: StreamViewportRole.camera,
-        preset: _settings.videoQualityPreset,
-      ),
+    return _settings.resolvedForViewport(
+      screenWidth: size.width,
+      screenHeight: size.height,
+      role: StreamViewportRole.camera,
     );
   }
 
@@ -63,11 +68,11 @@ class _CameraScreenState extends State<CameraScreen> {
     );
 
     signaling.onConnected = () {
-      setState(() => _status = 'Signaling connected');
+      setState(() => _status = 'Session broker ready');
       signaling.send(
         SignalingMessage(
           type: SignalingMessageType.join,
-          payload: {'roomId': _roomController.text, 'role': 'camera'},
+          payload: {'roomId': _transmissionRoomId, 'role': 'camera'},
         ),
       );
       signaling.send(
@@ -86,20 +91,20 @@ class _CameraScreenState extends State<CameraScreen> {
     };
 
     signaling.onError = (error, [stack]) {
-      setState(() => _status = 'Error: $error');
+      setState(() => _status = 'Connection issue');
       AppLogger.error('Camera signaling error', error, stack);
     };
 
     signaling.onDisconnected = () {
       if (mounted) {
-        setState(() => _status = 'Disconnected');
+        setState(() => _status = 'Session closed');
       }
     };
 
     rtc.onSignal = signaling.send;
     rtc.onConnectionState = (state) {
       if (mounted) {
-        setState(() => _status = 'Peer ${state.name}');
+        setState(() => _status = _peerStateLabel(state));
       }
     };
     rtc.onDiagnosticsChanged = (diagnostics) {
@@ -113,7 +118,7 @@ class _CameraScreenState extends State<CameraScreen> {
     setState(() {
       _settings = effectiveSettings;
       _rtc = rtc;
-      _status = 'Camera ready';
+      _status = 'Camera preview ready';
       _connectionReport = rtc.connectionSummary;
     });
 
@@ -125,7 +130,7 @@ class _CameraScreenState extends State<CameraScreen> {
     if (!mounted) return;
     setState(() {
       _signaling = signaling;
-      _status = 'Live';
+      _status = 'Waiting for viewer';
       _connectionReport = rtc.connectionSummary;
     });
   }
@@ -145,7 +150,7 @@ class _CameraScreenState extends State<CameraScreen> {
     setState(() {
       _signaling = null;
       _rtc = null;
-      _status = 'Stopped';
+      _status = 'Standby';
       _connectionReport = 'P2P first · idle';
     });
   }
@@ -161,7 +166,7 @@ class _CameraScreenState extends State<CameraScreen> {
     if (updatedSettings == null || !mounted) return;
 
     setState(() => _settings = updatedSettings);
-    await _rtc?.updateSettings(updatedSettings);
+    await _rtc?.updateSettings(_responsiveSettings(context));
   }
 
   Future<void> _toggleRecording() async {
@@ -175,24 +180,95 @@ class _CameraScreenState extends State<CameraScreen> {
       return;
     }
 
-    final baseDirectory = await getDownloadsDirectory() ??
-        await getApplicationDocumentsDirectory();
+    final baseDirectory = await getApplicationSupportDirectory();
     final recordingsDirectory = Directory(
       '${baseDirectory.path}/AetherLinkRecordings',
     );
+
     if (!await recordingsDirectory.exists()) {
       await recordingsDirectory.create(recursive: true);
     }
 
     final filePath =
         '${recordingsDirectory.path}/camera_${DateTime.now().millisecondsSinceEpoch}.mp4';
+
     await rtc.startRecording(filePath);
 
     if (!mounted) return;
     setState(() {
       _recordingPath = filePath;
-      _status = 'Recording';
+      _status = 'Recording locally';
     });
+  }
+
+  String _peerStateLabel(RTCPeerConnectionState state) {
+    switch (state) {
+      case RTCPeerConnectionState.RTCPeerConnectionStateNew:
+        return 'Preparing secure link';
+      case RTCPeerConnectionState.RTCPeerConnectionStateConnecting:
+        return 'Establishing secure link';
+      case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
+        return 'Secure link active';
+      case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
+        return 'Link interrupted';
+      case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
+        return 'Connection failed';
+      case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
+        return 'Session closed';
+    }
+  }
+
+  MetricTone _statusTone() {
+    if (_rtc == null) return MetricTone.neutral;
+    if (_status == 'Secure link active') {
+      return MetricTone.good;
+    }
+    if (_status == 'Link interrupted' || _status == 'Connection failed') {
+      return MetricTone.danger;
+    }
+    return MetricTone.warning;
+  }
+
+  Color _statusColor() {
+    switch (_statusTone()) {
+      case MetricTone.good:
+        return AzureTheme.success;
+      case MetricTone.warning:
+        return AzureTheme.warning;
+      case MetricTone.danger:
+        return const Color(0xFFB42318);
+      case MetricTone.neutral:
+        return AzureTheme.azureDark;
+    }
+  }
+
+  List<MetricBadge> _connectionHighlights(StreamSettings effectiveSettings) {
+    return [
+      MetricBadge(
+        label: effectiveSettings.preferDirectP2P
+            ? 'Direct route preferred'
+            : 'Auto route',
+        icon: Icons.hub_rounded,
+        tone: effectiveSettings.preferDirectP2P
+            ? MetricTone.good
+            : MetricTone.warning,
+      ),
+      MetricBadge(
+        label: '${_config.stunUrls.length} STUN servers',
+        icon: Icons.public_rounded,
+        tone:
+            _config.stunUrls.length > 1 ? MetricTone.good : MetricTone.warning,
+      ),
+      MetricBadge(
+        label: _config.hasTurnServer && effectiveSettings.enableTurnFallback
+            ? 'TURN on standby'
+            : 'TURN off',
+        icon: Icons.compare_arrows_rounded,
+        tone: _config.hasTurnServer && effectiveSettings.enableTurnFallback
+            ? MetricTone.good
+            : MetricTone.danger,
+      ),
+    ];
   }
 
   @override
@@ -210,9 +286,7 @@ class _CameraScreenState extends State<CameraScreen> {
     final canStop = isStreaming;
     final effectiveSettings = _responsiveSettings(context);
     final pairingPayload = buildPairingPayload(
-      roomId: _roomController.text.trim().isEmpty
-          ? 'demo-room'
-          : _roomController.text.trim(),
+      roomId: _transmissionRoomId,
       signalingUrl: _config.signalingUrl,
       role: 'camera',
     );
@@ -230,8 +304,7 @@ class _CameraScreenState extends State<CameraScreen> {
               children: [
                 StatusPill(
                   label: _status,
-                  color:
-                      isStreaming ? AzureTheme.success : AzureTheme.azureDark,
+                  color: _statusColor(),
                 ),
                 const Spacer(),
                 if (_rtc?.isRecording ?? false)
@@ -308,6 +381,14 @@ class _CameraScreenState extends State<CameraScreen> {
         ),
       ),
       panels: [
+        if (_settings.showConnectionReport)
+          ConnectionReportPanel(
+            title: 'Connection report',
+            summary:
+                'Route status: $_connectionReport. Secure device pairing is active and relay remains a last-resort path.',
+            highlights: _connectionHighlights(effectiveSettings),
+            statusTone: _statusTone(),
+          ),
         SurfacePanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -334,92 +415,86 @@ class _CameraScreenState extends State<CameraScreen> {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  _InfoChip(label: 'Bitrate ${_settings.bitrateLabel}'),
-                  _InfoChip(label: effectiveSettings.videoProfileLabel),
-                  _InfoChip(
+                  MetricBadge(
+                    label: effectiveSettings.powerSaveMode
+                        ? 'Power save on'
+                        : 'Power save off',
+                    icon: effectiveSettings.powerSaveMode
+                        ? Icons.battery_saver_rounded
+                        : Icons.battery_full_rounded,
+                  ),
+                  MetricBadge(
+                    label: 'Bitrate ${effectiveSettings.bitrateLabel}',
+                    icon: Icons.speed_rounded,
+                  ),
+                  MetricBadge(
+                    label: 'Quality ${effectiveSettings.qualityPresetLabel}',
+                    icon: Icons.high_quality_rounded,
+                  ),
+                  MetricBadge(
                     label: effectiveSettings.enableMicrophone
                         ? 'Voice enabled'
                         : 'Voice disabled',
+                    icon: effectiveSettings.enableMicrophone
+                        ? Icons.mic_rounded
+                        : Icons.mic_off_rounded,
                   ),
-                  _InfoChip(label: '${_config.stunUrls.length} STUN servers'),
-                  _InfoChip(
-                    label: _config.hasTurnServer
-                        ? 'TURN fallback ready'
+                  MetricBadge(
+                    label: '${_config.stunUrls.length} STUN servers',
+                    icon: Icons.public_rounded,
+                  ),
+                  MetricBadge(
+                    label: _config.hasTurnServer && _settings.enableTurnFallback
+                        ? 'TURN enabled'
                         : 'TURN disabled',
+                    icon: Icons.compare_arrows_rounded,
                   ),
                 ],
               ),
             ],
           ),
         ),
-        if (_settings.showConnectionReport)
+        if (_recordingPath != null)
           SurfacePanel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Connection report',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                ),
-                const SizedBox(height: 8),
-                Text(_connectionReport),
-                const SizedBox(height: 8),
-                Text(
-                  'TURN is not forced. The app starts with STUN-only gathering and only promotes relay when direct connectivity times out or fails.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AzureTheme.ink.withValues(alpha: 0.65),
-                      ),
-                ),
-                if (_recordingPath != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    'Saved to $_recordingPath',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AzureTheme.ink.withValues(alpha: 0.65),
-                        ),
+            child: Text(
+              'Recording saved to $_recordingPath',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: AzureTheme.ink.withValues(alpha: 0.72),
                   ),
-                ],
-              ],
             ),
           ),
       ],
       actions: [
         ElevatedButton(
           onPressed: canStart ? _startStreaming : null,
-          child: const Text('Start live'),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.play_circle_fill_rounded),
+              SizedBox(width: 8),
+              Text('Start live'),
+            ],
+          ),
         ),
         OutlinedButton(
           onPressed: canStop ? _stopStreaming : null,
-          child: const Text('Stop'),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.stop_circle_rounded),
+              SizedBox(width: 8),
+              Text('Stop'),
+            ],
+          ),
         ),
         if (isStreaming)
           OutlinedButton(
             onPressed: _toggleRecording,
-            child:
-                Text((_rtc?.isRecording ?? false) ? 'Stop rec' : 'Start rec'),
+            child: Text(
+              (_rtc?.isRecording ?? false) ? 'Stop rec' : 'Start rec',
+            ),
           ),
       ],
-    );
-  }
-}
-
-class _InfoChip extends StatelessWidget {
-  const _InfoChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFFD6E7FF)),
-      ),
-      child: Text(label),
     );
   }
 }

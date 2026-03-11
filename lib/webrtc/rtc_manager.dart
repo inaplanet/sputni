@@ -146,7 +146,9 @@ class RtcManager {
     debugPrint('RTC: audio tracks = ${_localStream?.getAudioTracks().length}');
 
     localRenderer.srcObject = _localStream;
-    localRenderer.muted = true;
+    if ((_localStream?.getAudioTracks().isNotEmpty ?? false)) {
+      localRenderer.muted = true;
+    }
 
     for (final track in _localStream!.getTracks()) {
       await _peerConnection!.addTrack(track, _localStream!);
@@ -399,8 +401,9 @@ class RtcManager {
       for (final encoding in encodings) {
         encoding.maxBitrate = maxBitrate;
         encoding.priority = _encodingPriorityFor(_settings.viewerPriority);
-        encoding.maxFramerate =
-            _settings.viewerPriority == ViewerPriorityMode.smooth ? 30 : 24;
+        encoding.maxFramerate = _settings.videoProfile.frameRate > 0
+            ? _settings.videoProfile.frameRate
+            : (_settings.viewerPriority == ViewerPriorityMode.smooth ? 30 : 24);
         encoding.scaleResolutionDownBy =
             _settings.viewerPriority == ViewerPriorityMode.clarity ? 1.0 : 1.15;
       }
@@ -471,7 +474,9 @@ class RtcManager {
 
     _localStream = updatedStream;
     localRenderer.srcObject = updatedStream;
-    localRenderer.muted = true;
+    if ((_localStream?.getAudioTracks().isNotEmpty ?? false)) {
+      localRenderer.muted = true;
+    }
     await _applyVideoBitrateSettings();
 
     for (final track

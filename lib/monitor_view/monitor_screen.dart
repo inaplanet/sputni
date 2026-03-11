@@ -7,6 +7,7 @@ import '../signaling/signaling_client.dart';
 import '../signaling/signaling_message.dart';
 import '../ui/azure_theme.dart';
 import '../utils/app_logger.dart';
+import '../utils/room_security.dart';
 import '../webrtc/rtc_manager.dart';
 import '../widgets/app_shell_ui.dart';
 import '../widgets/pairing_panel.dart';
@@ -19,25 +20,29 @@ class MonitorScreen extends StatefulWidget {
 }
 
 class _MonitorScreenState extends State<MonitorScreen> {
-  final _roomController = TextEditingController(text: 'demo-room');
+  final _roomController = TextEditingController(text: 'first-channel');
 
   late final AppConfig _config;
   SignalingClient? _signaling;
   RtcManager? _rtc;
   StreamSettings _settings = StreamSettings.monitorDefaults;
   PairingMethod _pairingMethod = PairingMethod.roomId;
-  String _status = 'Offline';
+  String _status = 'Standby';
   String _connectionReport = 'P2P first · idle';
+
+  String get _resolvedRoomId {
+    final value = _roomController.text.trim();
+    return value.isEmpty ? 'first-channel' : value;
+  }
+
+  String get _transmissionRoomId => secureRoomToken(_resolvedRoomId);
 
   StreamSettings _responsiveSettings(BuildContext context) {
     final size = MediaQuery.of(context).size;
-    return _settings.copyWith(
-      videoProfile: VideoProfile.adaptive(
-        screenWidth: size.width,
-        screenHeight: size.height,
-        role: StreamViewportRole.monitor,
-        preset: _settings.videoQualityPreset,
-      ),
+    return _settings.resolvedForViewport(
+      screenWidth: size.width,
+      screenHeight: size.height,
+      role: StreamViewportRole.monitor,
     );
   }
 
@@ -59,11 +64,11 @@ class _MonitorScreenState extends State<MonitorScreen> {
     );
 
     signaling.onConnected = () {
-      setState(() => _status = 'Listening');
+      setState(() => _status = 'Session broker ready');
       signaling.send(
         SignalingMessage(
           type: SignalingMessageType.join,
-          payload: {'roomId': _roomController.text, 'role': 'monitor'},
+          payload: {'roomId': _transmissionRoomId, 'role': 'monitor'},
         ),
       );
     };
@@ -72,27 +77,27 @@ class _MonitorScreenState extends State<MonitorScreen> {
       if (message.type == SignalingMessageType.control) {
         final action = message.payload['action'];
         if (mounted) {
-          setState(() => _status = 'Control $action');
+          setState(() => _status = _controlStatusLabel(action?.toString()));
         }
       }
       await rtc.handleSignalingMessage(message);
     };
 
     signaling.onError = (error, [stack]) {
-      setState(() => _status = 'Error: $error');
+      setState(() => _status = 'Connection issue');
       AppLogger.error('Monitor signaling error', error, stack);
     };
 
     signaling.onDisconnected = () {
       if (mounted) {
-        setState(() => _status = 'Disconnected');
+        setState(() => _status = 'Session closed');
       }
     };
 
     rtc.onSignal = signaling.send;
     rtc.onConnectionState = (state) {
       if (mounted) {
-        setState(() => _status = 'Peer ${state.name}');
+        setState(() => _status = _peerStateLabel(state));
       }
     };
     rtc.onDiagnosticsChanged = (diagnostics) {
@@ -109,7 +114,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
       _settings = effectiveSettings;
       _signaling = signaling;
       _rtc = rtc;
-      _status = 'Awaiting camera';
+      _status = 'Waiting for camera';
       _connectionReport = rtc.connectionSummary;
     });
   }
@@ -122,9 +127,84 @@ class _MonitorScreenState extends State<MonitorScreen> {
     setState(() {
       _signaling = null;
       _rtc = null;
-      _status = 'Disconnected';
+      _status = 'Standby';
       _connectionReport = 'P2P first · idle';
     });
+  }
+
+  String _peerStateLabel(RTCPeerConnectionState state) {
+    switch (state) {
+      case RTCPeerConnectionState.RTCPeerConnectionStateNew:
+        return 'Preparing secure link';
+      case RTCPeerConnectionState.RTCPeerConnectionStateConnecting:
+        return 'Establishing secure link';
+      case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
+        return 'Secure link active';
+      case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
+        return 'Link interrupted';
+      case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
+        return 'Connection failed';
+      case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
+        return 'Session closed';
+    }
+  }
+
+  String _controlStatusLabel(String? action) {
+    switch (action) {
+      case 'start':
+        return 'Camera went live';
+      case 'stop':
+        return 'Camera stopped streaming';
+      default:
+        return 'Control update received';
+    }
+  }
+
+  MetricTone _statusTone() {
+    if (_rtc == null) return MetricTone.neutral;
+    if (_status == 'Secure link active') return MetricTone.good;
+    if (_status == 'Link interrupted' || _status == 'Connection failed') {
+      return MetricTone.danger;
+    }
+    return MetricTone.warning;
+  }
+
+  Color _statusColor() {
+    switch (_statusTone()) {
+      case MetricTone.good:
+        return AzureTheme.success;
+      case MetricTone.warning:
+        return AzureTheme.warning;
+      case MetricTone.danger:
+        return const Color(0xFFB42318);
+      case MetricTone.neutral:
+        return AzureTheme.azureDark;
+    }
+  }
+
+  List<MetricBadge> _connectionHighlights(StreamSettings effectiveSettings) {
+    return [
+      MetricBadge(
+        label: effectiveSettings.viewerPriority.name.toUpperCase(),
+        icon: Icons.tune_rounded,
+        tone: MetricTone.neutral,
+      ),
+      MetricBadge(
+        label: effectiveSettings.videoFit == VideoFitMode.cover
+            ? 'Fill view'
+            : 'Fit view',
+        icon: effectiveSettings.videoFit == VideoFitMode.cover
+            ? Icons.crop_free_rounded
+            : Icons.fit_screen_rounded,
+        tone: MetricTone.neutral,
+      ),
+      MetricBadge(
+        label: '${_config.stunUrls.length} STUN servers',
+        icon: Icons.public_rounded,
+        tone:
+            _config.stunUrls.length > 1 ? MetricTone.good : MetricTone.warning,
+      ),
+    ];
   }
 
   @override
@@ -142,9 +222,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
     final canDisconnect = isConnected;
     final effectiveSettings = _responsiveSettings(context);
     final pairingPayload = buildPairingPayload(
-      roomId: _roomController.text.trim().isEmpty
-          ? 'demo-room'
-          : _roomController.text.trim(),
+      roomId: _transmissionRoomId,
       signalingUrl: _config.signalingUrl,
       role: 'monitor',
     );
@@ -160,7 +238,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
               children: [
                 StatusPill(
                   label: _status,
-                  color: isConnected ? AzureTheme.success : AzureTheme.warning,
+                  color: _statusColor(),
                 ),
                 const Spacer(),
               ],
@@ -224,6 +302,14 @@ class _MonitorScreenState extends State<MonitorScreen> {
         ),
       ),
       panels: [
+        if (_settings.showConnectionReport)
+          ConnectionReportPanel(
+            title: 'Connection report',
+            summary:
+                'Route status: $_connectionReport. Monitor sessions stay optimized for direct delivery first and keep relay as fallback only.',
+            highlights: _connectionHighlights(effectiveSettings),
+            statusTone: _statusTone(),
+          ),
         SurfacePanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -251,51 +337,54 @@ class _MonitorScreenState extends State<MonitorScreen> {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  _ViewerChip(
-                      label: _settings.viewerPriority.name.toUpperCase()),
-                  _ViewerChip(
-                      label: _settings.videoFit == VideoFitMode.cover
-                          ? 'FILL'
-                          : 'FIT'),
-                  _ViewerChip(label: effectiveSettings.videoProfileLabel),
-                  _ViewerChip(label: '${_config.stunUrls.length} STUN servers'),
+                  MetricBadge(
+                    label: _settings.viewerPriority.name.toUpperCase(),
+                    icon: Icons.tune_rounded,
+                  ),
+                  MetricBadge(
+                    label: _settings.videoFit == VideoFitMode.cover
+                        ? 'Fill view'
+                        : 'Fit view',
+                    icon: _settings.videoFit == VideoFitMode.cover
+                        ? Icons.crop_free_rounded
+                        : Icons.fit_screen_rounded,
+                  ),
+                  MetricBadge(
+                    label: effectiveSettings.videoProfileLabel,
+                    icon: Icons.monitor_rounded,
+                  ),
+                  MetricBadge(
+                    label: '${_config.stunUrls.length} STUN servers',
+                    icon: Icons.public_rounded,
+                  ),
                 ],
               ),
             ],
           ),
         ),
-        if (_settings.showConnectionReport)
-          SurfacePanel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Connection report',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                ),
-                const SizedBox(height: 8),
-                Text(_connectionReport),
-                const SizedBox(height: 8),
-                Text(
-                  'Relay remains a last resort. This viewer only gathers TURN candidates after the session asks for fallback or direct ICE fails.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AzureTheme.ink.withValues(alpha: 0.65),
-                      ),
-                ),
-              ],
-            ),
-          ),
       ],
       actions: [
         ElevatedButton(
           onPressed: canConnect ? _connect : null,
-          child: const Text('Connect'),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.wifi_tethering_rounded),
+              SizedBox(width: 8),
+              Text('Connect'),
+            ],
+          ),
         ),
         OutlinedButton(
           onPressed: canDisconnect ? _disconnect : null,
-          child: const Text('Disconnect'),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.link_off_rounded),
+              SizedBox(width: 8),
+              Text('Disconnect'),
+            ],
+          ),
         ),
       ],
     );
@@ -311,24 +400,5 @@ class _MonitorScreenState extends State<MonitorScreen> {
     }
 
     return effectiveSettings.videoProfile.previewAspectRatio;
-  }
-}
-
-class _ViewerChip extends StatelessWidget {
-  const _ViewerChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFFD6E7FF)),
-      ),
-      child: Text(label),
-    );
   }
 }

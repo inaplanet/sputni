@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 enum ViewerPriorityMode { balanced, smooth, clarity }
@@ -22,6 +24,14 @@ class VideoProfile {
   final int frameRate;
   final double previewAspectRatio;
   final String label;
+
+  static const cameraPowerSave = VideoProfile(
+    width: 640,
+    height: 360,
+    frameRate: 15,
+    previewAspectRatio: 9 / 16,
+    label: 'Power save',
+  );
 
   static VideoProfile adaptive({
     required double screenWidth,
@@ -124,6 +134,7 @@ class StreamSettings {
   const StreamSettings({
     this.preferDirectP2P = true,
     this.enableTurnFallback = true,
+    this.powerSaveMode = false,
     this.enableMicrophone = false,
     this.maxVideoBitrateKbps = 1200,
     this.lowLightBoost = true,
@@ -142,6 +153,7 @@ class StreamSettings {
 
   final bool preferDirectP2P;
   final bool enableTurnFallback;
+  final bool powerSaveMode;
   final bool enableMicrophone;
   final int maxVideoBitrateKbps;
   final bool lowLightBoost;
@@ -167,6 +179,7 @@ class StreamSettings {
   StreamSettings copyWith({
     bool? preferDirectP2P,
     bool? enableTurnFallback,
+    bool? powerSaveMode,
     bool? enableMicrophone,
     int? maxVideoBitrateKbps,
     bool? lowLightBoost,
@@ -179,6 +192,7 @@ class StreamSettings {
     return StreamSettings(
       preferDirectP2P: preferDirectP2P ?? this.preferDirectP2P,
       enableTurnFallback: enableTurnFallback ?? this.enableTurnFallback,
+      powerSaveMode: powerSaveMode ?? this.powerSaveMode,
       enableMicrophone: enableMicrophone ?? this.enableMicrophone,
       maxVideoBitrateKbps: maxVideoBitrateKbps ?? this.maxVideoBitrateKbps,
       lowLightBoost: lowLightBoost ?? this.lowLightBoost,
@@ -197,6 +211,32 @@ class StreamSettings {
       case VideoFitMode.contain:
         return RTCVideoViewObjectFit.RTCVideoViewObjectFitContain;
     }
+  }
+
+  StreamSettings resolvedForViewport({
+    required double screenWidth,
+    required double screenHeight,
+    required StreamViewportRole role,
+  }) {
+    if (role == StreamViewportRole.camera && powerSaveMode) {
+      return copyWith(
+        enableMicrophone: false,
+        maxVideoBitrateKbps: math.min(maxVideoBitrateKbps, 450),
+        lowLightBoost: false,
+        viewerPriority: ViewerPriorityMode.balanced,
+        videoQualityPreset: VideoQualityPreset.dataSaver,
+        videoProfile: VideoProfile.cameraPowerSave,
+      );
+    }
+
+    return copyWith(
+      videoProfile: VideoProfile.adaptive(
+        screenWidth: screenWidth,
+        screenHeight: screenHeight,
+        role: role,
+        preset: videoQualityPreset,
+      ),
+    );
   }
 
   String get bitrateLabel => '$maxVideoBitrateKbps kbps';

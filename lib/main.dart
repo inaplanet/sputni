@@ -40,74 +40,96 @@ class _HomeScreen extends StatelessWidget {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFFEAF5FF), Colors.white, Color(0xFFD8EEFF)],
+            colors: [Color(0xFFE6F4FF), Color(0xFFF8FBFF), Color(0xFFD7EBFF)],
           ),
         ),
         child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'AetherLink',
-                  style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                        fontWeight: FontWeight.w900,
+          child: Stack(
+            children: [
+              const Positioned(
+                top: -70,
+                left: -10,
+                child: _HomeGlow(size: 220, color: Color(0x661279FF)),
+              ),
+              const Positioned(
+                top: 140,
+                right: -40,
+                child: _HomeGlow(size: 190, color: Color(0x556BD7FF)),
+              ),
+              const Positioned(
+                bottom: -90,
+                left: 80,
+                child: _HomeGlow(size: 250, color: Color(0x40B4DDFF)),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'AetherLink',
+                      style: Theme.of(context)
+                          .textTheme
+                          .displaySmall
+                          ?.copyWith(fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Pair devices and control your environment.',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 24),
+                    Expanded(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final isCompact = constraints.maxWidth < 720;
+                          final cards = [
+                            _RoleCard(
+                              title: 'Camera',
+                              subtitle:
+                                  'Send live video with P2P-first ICE and relay fallback only when needed.',
+                              actionLabel: 'Open camera',
+                              assetPath: 'assets/media/cameramode.mp4',
+                              onTap: () => Navigator.pushNamed(
+                                  context, AppRoutes.camera),
+                            ),
+                            _RoleCard(
+                              title: 'Monitor',
+                              subtitle:
+                                  'Watch the stream with viewer-focused controls and connection reporting.',
+                              actionLabel: 'Open monitor',
+                              assetPath: 'assets/media/monitormode.mp4',
+                              onTap: () => Navigator.pushNamed(
+                                context,
+                                AppRoutes.monitor,
+                              ),
+                            ),
+                          ];
+
+                          if (isCompact) {
+                            return Column(
+                              children: [
+                                Expanded(child: cards[0]),
+                                const SizedBox(height: 16),
+                                Expanded(child: cards[1]),
+                              ],
+                            );
+                          }
+
+                          return Row(
+                            children: [
+                              Expanded(child: cards[0]),
+                              const SizedBox(width: 16),
+                              Expanded(child: cards[1]),
+                            ],
+                          );
+                        },
                       ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  'Pair devices and control your environment.',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 24),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final isCompact = constraints.maxWidth < 720;
-                      final cards = [
-                        _RoleCard(
-                          title: 'Camera',
-                          subtitle:
-                              'Send live video with P2P-first ICE and relay fallback only when needed.',
-                          actionLabel: 'Open camera',
-                          assetPath: 'assets/media/cameramode.mp4',
-                          onTap: () =>
-                              Navigator.pushNamed(context, AppRoutes.camera),
-                        ),
-                        _RoleCard(
-                          title: 'Monitor',
-                          subtitle:
-                              'Watch the stream with viewer-focused controls and connection reporting.',
-                          actionLabel: 'Open monitor',
-                          assetPath: 'assets/media/monitormode.mp4',
-                          onTap: () =>
-                              Navigator.pushNamed(context, AppRoutes.monitor),
-                        ),
-                      ];
-
-                      if (isCompact) {
-                        return Column(
-                          children: [
-                            Expanded(child: cards[0]),
-                            const SizedBox(height: 16),
-                            Expanded(child: cards[1]),
-                          ],
-                        );
-                      }
-
-                      return Row(
-                        children: [
-                          Expanded(child: cards[0]),
-                          const SizedBox(width: 16),
-                          Expanded(child: cards[1]),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -181,6 +203,15 @@ class _RoleCardState extends State<_RoleCard> {
         child: Stack(
           fit: StackFit.expand,
           children: [
+            Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(
+                  color: AzureTheme.glassStroke,
+                  width: 1.1,
+                ),
+              ),
+            ),
             if (controller != null && controller.value.isInitialized)
               FittedBox(
                 fit: BoxFit.cover,
@@ -236,12 +267,49 @@ class _RoleCardState extends State<_RoleCard> {
                   const SizedBox(height: 20),
                   ElevatedButton(
                     onPressed: widget.onTap,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white.withValues(alpha: 0.18),
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: Colors.white.withValues(
+                        alpha: 0.1,
+                      ),
+                      disabledForegroundColor: Colors.white54,
+                      shadowColor: Colors.transparent,
+                      elevation: 0,
+                      side: BorderSide.none,
+                    ),
                     child: Text(widget.actionLabel),
                   ),
                 ],
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeGlow extends StatelessWidget {
+  const _HomeGlow({
+    required this.size,
+    required this.color,
+  });
+
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(
+            colors: [color, color.withValues(alpha: 0)],
+          ),
         ),
       ),
     );

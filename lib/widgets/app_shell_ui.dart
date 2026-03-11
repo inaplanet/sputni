@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 
 import '../config/stream_settings.dart';
@@ -29,94 +31,196 @@ class AppShell extends StatelessWidget {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFFEAF5FF), Colors.white, Color(0xFFD9EFFF)],
+            colors: [Color(0xFFE6F4FF), Color(0xFFF8FBFF), Color(0xFFD7EBFF)],
           ),
-          backgroundBlendMode: BlendMode.srcOver,
         ),
         child: SafeArea(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+          child: Stack(
             children: [
-              Container(
-                padding: const EdgeInsets.fromLTRB(14, 14, 18, 18),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.82),
-                  borderRadius: BorderRadius.circular(28),
-                  border: Border.all(color: const Color(0xFFD8E9FF)),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x120A4FC3),
-                      blurRadius: 24,
-                      offset: Offset(0, 14),
-                    ),
-                  ],
+              const Positioned(
+                top: -80,
+                left: -30,
+                child: _GlowOrb(
+                  size: 220,
+                  color: Color(0x701279FF),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+              ),
+              const Positioned(
+                top: 180,
+                right: -40,
+                child: _GlowOrb(
+                  size: 180,
+                  color: Color(0x556BD7FF),
+                ),
+              ),
+              const Positioned(
+                bottom: -70,
+                left: 60,
+                child: _GlowOrb(
+                  size: 240,
+                  color: Color(0x40A6D4FF),
+                ),
+              ),
+              ListView(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+                children: [
+                  GlassPanel(
+                    borderRadius: 30,
+                    padding: const EdgeInsets.fromLTRB(14, 14, 18, 18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        IconButton.filledTonal(
-                          onPressed: onBack ??
-                              () {
-                                if (Navigator.of(context).canPop()) {
-                                  Navigator.of(context).pop();
-                                }
-                              },
-                          icon: const Icon(Icons.arrow_back_rounded),
+                        Row(
+                          children: [
+                            IconButton(
+                              onPressed: onBack ??
+                                  () {
+                                    if (Navigator.of(context).canPop()) {
+                                      Navigator.of(context).pop();
+                                    }
+                                  },
+                              icon: const Icon(Icons.arrow_back_rounded),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                title,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .headlineMedium
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w800,
+                                      color: AzureTheme.ink,
+                                    ),
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            title,
-                            style: Theme.of(context)
-                                .textTheme
-                                .headlineMedium
-                                ?.copyWith(
-                                  fontWeight: FontWeight.w800,
-                                  color: AzureTheme.ink,
-                                ),
-                          ),
+                        const SizedBox(height: 8),
+                        Text(
+                          subtitle,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyLarge
+                              ?.copyWith(
+                                color: AzureTheme.ink.withValues(alpha: 0.72),
+                                height: 1.35,
+                              ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      subtitle,
-                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            color: AzureTheme.ink.withValues(alpha: 0.72),
-                            height: 1.35,
-                          ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 18),
-              hero,
-              const SizedBox(height: 18),
-              ...panels.expand((panel) => [panel, const SizedBox(height: 14)]),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  if (constraints.maxWidth < 640) {
-                    return Column(
-                      children: actions
-                          .map((action) => Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: action,
-                              ))
-                          .toList(),
-                    );
-                  }
+                  ),
+                  const SizedBox(height: 18),
+                  hero,
+                  const SizedBox(height: 18),
+                  ...panels.expand(
+                    (panel) => [panel, const SizedBox(height: 14)],
+                  ),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      if (constraints.maxWidth < 640) {
+                        return Column(
+                          children: actions
+                              .map(
+                                (action) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: action,
+                                ),
+                              )
+                              .toList(),
+                        );
+                      }
 
-                  return Row(
-                    children: actions
-                        .map((action) => Expanded(child: action))
-                        .expand((widget) => [widget, const SizedBox(width: 12)])
-                        .toList()
-                      ..removeLast(),
-                  );
-                },
+                      return Row(
+                        children: actions
+                            .map((action) => Expanded(child: action))
+                            .expand(
+                              (widget) => [widget, const SizedBox(width: 12)],
+                            )
+                            .toList()
+                          ..removeLast(),
+                      );
+                    },
+                  ),
+                ],
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class GlassPanel extends StatelessWidget {
+  const GlassPanel({
+    required this.child,
+    this.padding,
+    this.borderRadius = 28,
+    this.opacity = 0.68,
+    super.key,
+  });
+
+  final Widget child;
+  final EdgeInsetsGeometry? padding;
+  final double borderRadius;
+  final double opacity;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(borderRadius),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+        child: Container(
+          padding: padding,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(borderRadius),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.white.withValues(alpha: opacity),
+                Colors.white.withValues(alpha: opacity - 0.14),
+              ],
+            ),
+            border: Border.all(color: AzureTheme.glassStroke),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x14081A33),
+                blurRadius: 28,
+                offset: Offset(0, 18),
+              ),
+            ],
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+class _GlowOrb extends StatelessWidget {
+  const _GlowOrb({
+    required this.size,
+    required this.color,
+  });
+
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(
+            colors: [
+              color,
+              color.withValues(alpha: 0),
             ],
           ),
         ),
@@ -139,20 +243,9 @@ class SurfacePanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       clipBehavior: Clip.antiAlias,
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(28),
-          border: Border.all(color: const Color(0xFFD7E8FF)),
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Colors.white, Color(0xFFF7FBFF)],
-          ),
-        ),
-        child: Padding(
-          padding: padding,
-          child: child,
-        ),
+      child: GlassPanel(
+        padding: padding,
+        child: child,
       ),
     );
   }
@@ -173,9 +266,9 @@ class StatusPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
+        color: Colors.white.withValues(alpha: 0.55),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.2)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.6)),
       ),
       child: Text(
         label,
@@ -186,6 +279,216 @@ class StatusPill extends StatelessWidget {
       ),
     );
   }
+}
+
+enum MetricTone { neutral, good, warning, danger }
+
+class MetricBadge extends StatefulWidget {
+  const MetricBadge({
+    required this.label,
+    required this.icon,
+    this.tone = MetricTone.neutral,
+    this.monochrome = false,
+    super.key,
+  });
+
+  final String label;
+  final IconData icon;
+  final MetricTone tone;
+  final bool monochrome;
+
+  @override
+  State<MetricBadge> createState() => _MetricBadgeState();
+}
+
+class _MetricBadgeState extends State<MetricBadge>
+    with SingleTickerProviderStateMixin {
+  bool _isHovered = false;
+  bool _isTappedOpen = false;
+
+  bool get _isExpanded => _usesHover ? _isHovered : _isTappedOpen;
+
+  bool get _usesHover {
+    switch (Theme.of(context).platform) {
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+      case TargetPlatform.linux:
+        return true;
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.fuchsia:
+        return false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _metricColors(widget.tone);
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: _usesHover ? (_) => setState(() => _isHovered = true) : null,
+      onExit: _usesHover ? (_) => setState(() => _isHovered = false) : null,
+      child: GestureDetector(
+        onTap: _usesHover
+            ? null
+            : () => setState(() => _isTappedOpen = !_isTappedOpen),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: colors.background,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: colors.border),
+          ),
+          child: AnimatedSize(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(widget.icon, size: 16, color: colors.foreground),
+                if (_isExpanded) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    widget.label,
+                    style: TextStyle(
+                      color: colors.foreground,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  _MetricColors _metricColors(MetricTone tone) {
+    if (widget.monochrome) {
+      return const _MetricColors(
+        background: Color(0xBFFFFFFF),
+        border: Color(0x99FFFFFF),
+        foreground: AzureTheme.azureDark,
+      );
+    }
+
+    switch (tone) {
+      case MetricTone.good:
+        return const _MetricColors(
+          background: Color(0xBFFFFFFF),
+          border: Color(0x99FFFFFF),
+          foreground: Color(0xFF157347),
+        );
+      case MetricTone.warning:
+        return const _MetricColors(
+          background: Color(0xBFFFFFFF),
+          border: Color(0x99FFFFFF),
+          foreground: Color(0xFFB56100),
+        );
+      case MetricTone.danger:
+        return const _MetricColors(
+          background: Color(0xBFFFFFFF),
+          border: Color(0x99FFFFFF),
+          foreground: Color(0xFFB42318),
+        );
+      case MetricTone.neutral:
+        return const _MetricColors(
+          background: Color(0xBFFFFFFF),
+          border: Color(0x99FFFFFF),
+          foreground: AzureTheme.azureDark,
+        );
+    }
+  }
+}
+
+class ConnectionReportPanel extends StatelessWidget {
+  const ConnectionReportPanel({
+    required this.title,
+    required this.summary,
+    required this.highlights,
+    required this.statusTone,
+    super.key,
+  });
+
+  final String title;
+  final String summary;
+  final List<MetricBadge> highlights;
+  final MetricTone statusTone;
+
+  @override
+  Widget build(BuildContext context) {
+    return SurfacePanel(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.48),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AzureTheme.glassStroke),
+                ),
+                child: const Icon(
+                  Icons.network_check_rounded,
+                  color: AzureTheme.ink,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            summary,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: AzureTheme.ink.withValues(alpha: 0.78),
+                  height: 1.4,
+                ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: highlights
+                .map(
+                  (highlight) => MetricBadge(
+                    label: highlight.label,
+                    icon: highlight.icon,
+                    monochrome: true,
+                  ),
+                )
+                .toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricColors {
+  const _MetricColors({
+    required this.background,
+    required this.border,
+    required this.foreground,
+  });
+
+  final Color background;
+  final Color border;
+  final Color foreground;
 }
 
 Future<StreamSettings?> showSettingsSheet({
@@ -224,6 +527,26 @@ class _SettingsSheet extends StatefulWidget {
 class _SettingsSheetState extends State<_SettingsSheet> {
   late StreamSettings _settings = widget.initialSettings;
 
+  void _setPowerSaveMode(bool enabled) {
+    setState(() {
+      _settings = _settings.copyWith(
+        powerSaveMode: enabled,
+        enableMicrophone: enabled ? false : _settings.enableMicrophone,
+        maxVideoBitrateKbps: enabled && _settings.maxVideoBitrateKbps > 450
+            ? 450
+            : _settings.maxVideoBitrateKbps,
+        lowLightBoost: enabled ? false : _settings.lowLightBoost,
+        viewerPriority:
+            enabled ? ViewerPriorityMode.balanced : _settings.viewerPriority,
+        videoQualityPreset: enabled
+            ? VideoQualityPreset.dataSaver
+            : _settings.videoQualityPreset,
+        videoProfile:
+            enabled ? VideoProfile.cameraPowerSave : _settings.videoProfile,
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
@@ -232,242 +555,280 @@ class _SettingsSheetState extends State<_SettingsSheet> {
 
     return Container(
       margin: const EdgeInsets.fromLTRB(0, 16, 0, 16),
-      decoration: const BoxDecoration(
-        color: AzureTheme.mist,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      child: SafeArea(
-        top: true,
-        child: Padding(
-          padding: EdgeInsets.only(
-            left: horizontalPadding,
-            right: horizontalPadding,
-            top: verticalPadding,
-            bottom: verticalPadding +
-                mediaQuery.padding.bottom +
-                mediaQuery.viewInsets.bottom,
-          ),
-          child: LayoutBuilder(
-            builder: (context, constraints) => Column(
-              children: [
-                Center(
-                  child: Container(
-                    width: 56,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      color: AzureTheme.azure.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(999),
+      child: GlassPanel(
+        borderRadius: 28,
+        opacity: 0.78,
+        child: SafeArea(
+          top: true,
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: horizontalPadding,
+              right: horizontalPadding,
+              top: verticalPadding,
+              bottom: verticalPadding +
+                  mediaQuery.padding.bottom +
+                  mediaQuery.viewInsets.bottom,
+            ),
+            child: LayoutBuilder(
+              builder: (context, constraints) => Column(
+                children: [
+                  Center(
+                    child: Container(
+                      width: 56,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: AzureTheme.azure.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 20),
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.title,
-                          style: Theme.of(context)
-                              .textTheme
-                              .headlineSmall
-                              ?.copyWith(
-                                fontWeight: FontWeight.w800,
-                                color: AzureTheme.ink,
-                              ),
-                        ),
-                        const SizedBox(height: 16),
-                        SurfacePanel(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const _SectionTitle('Live Connection'),
-                              SwitchListTile(
-                                contentPadding: EdgeInsets.zero,
-                                title: const Text('Enable voice'),
-                                subtitle: const Text(
-                                    'Capture microphone audio together with video.'),
-                                value: _settings.enableMicrophone,
-                                onChanged: (value) => setState(
-                                  () => _settings = _settings.copyWith(
-                                      enableMicrophone: value),
+                  const SizedBox(height: 20),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.title,
+                            style: Theme.of(context)
+                                .textTheme
+                                .headlineSmall
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  color: AzureTheme.ink,
                                 ),
-                              ),
-                              SwitchListTile(
-                                contentPadding: EdgeInsets.zero,
-                                title: const Text('Prefer direct P2P'),
-                                subtitle: const Text(
-                                    'Use host and STUN candidates before relay.'),
-                                value: _settings.preferDirectP2P,
-                                onChanged: (value) => setState(
-                                  () => _settings = _settings.copyWith(
-                                      preferDirectP2P: value),
-                                ),
-                              ),
-                              SwitchListTile(
-                                contentPadding: EdgeInsets.zero,
-                                title: const Text('TURN fallback'),
-                                subtitle: Text(
-                                  widget.turnAvailable
-                                      ? 'Only arm relay after direct connection fails.'
-                                      : 'TURN server not configured in environment.',
-                                ),
-                                value: _settings.enableTurnFallback &&
-                                    widget.turnAvailable,
-                                onChanged: widget.turnAvailable
-                                    ? (value) => setState(
-                                          () => _settings = _settings.copyWith(
-                                              enableTurnFallback: value),
-                                        )
-                                    : null,
-                              ),
-                            ],
                           ),
-                        ),
-                        const SizedBox(height: 12),
-                        SurfacePanel(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const _SectionTitle('Video Quality'),
-                              Text('Lower video bitrate',
-                                  style:
-                                      Theme.of(context).textTheme.titleMedium),
-                              Text(
-                                _settings.bitrateLabel,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodySmall
-                                    ?.copyWith(
-                                      color: AzureTheme.ink
-                                          .withValues(alpha: 0.65),
-                                    ),
-                              ),
-                              Slider(
-                                min: 250,
-                                max: 2500,
-                                divisions: 9,
-                                value: _settings.maxVideoBitrateKbps.toDouble(),
-                                label: _settings.bitrateLabel,
-                                onChanged: (value) => setState(
-                                  () => _settings = _settings.copyWith(
-                                    maxVideoBitrateKbps: value.round(),
+                          const SizedBox(height: 16),
+                          SurfacePanel(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const _SectionTitle('Live Connection'),
+                                SwitchListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  title: const Text('Power save mode'),
+                                  subtitle: const Text(
+                                      'Lower capture load, cap bitrate, disable mic, and turn off low-light processing to reduce battery use.'),
+                                  value: _settings.powerSaveMode,
+                                  onChanged: _setPowerSaveMode,
+                                ),
+                                SwitchListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  title: const Text('Enable voice'),
+                                  subtitle: Text(_settings.powerSaveMode
+                                      ? 'Disabled while Power save mode is active.'
+                                      : 'Capture microphone audio together with video.'),
+                                  value: _settings.powerSaveMode
+                                      ? false
+                                      : _settings.enableMicrophone,
+                                  onChanged: _settings.powerSaveMode
+                                      ? null
+                                      : (value) => setState(
+                                            () => _settings =
+                                                _settings.copyWith(
+                                                    enableMicrophone: value),
+                                          ),
+                                ),
+                                SwitchListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  title: const Text('Prefer direct P2P'),
+                                  subtitle: const Text(
+                                      'Use host and STUN candidates before relay.'),
+                                  value: _settings.preferDirectP2P,
+                                  onChanged: (value) => setState(
+                                    () => _settings = _settings.copyWith(
+                                        preferDirectP2P: value),
                                   ),
                                 ),
-                              ),
-                              const SizedBox(height: 16),
-                              Text('Capture quality',
-                                  style:
-                                      Theme.of(context).textTheme.titleMedium),
-                              const SizedBox(height: 12),
-                              Wrap(
-                                spacing: 8,
-                                children:
-                                    VideoQualityPreset.values.map((preset) {
-                                  return ChoiceChip(
-                                    label: Text(_qualityPresetLabel(preset)),
-                                    selected:
-                                        _settings.videoQualityPreset == preset,
-                                    onSelected: (_) => setState(
-                                      () => _settings = _settings.copyWith(
-                                        videoQualityPreset: preset,
+                                SwitchListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  title: const Text('TURN fallback'),
+                                  subtitle: Text(
+                                    widget.turnAvailable
+                                        ? 'Only arm relay after direct connection fails.'
+                                        : 'TURN server not configured in environment.',
+                                  ),
+                                  value: _settings.enableTurnFallback &&
+                                      widget.turnAvailable,
+                                  onChanged: widget.turnAvailable
+                                      ? (value) => setState(
+                                            () => _settings =
+                                                _settings.copyWith(
+                                                    enableTurnFallback: value),
+                                          )
+                                      : null,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          SurfacePanel(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const _SectionTitle('Video Quality'),
+                                Text('Lower video bitrate',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium),
+                                Text(
+                                  _settings.bitrateLabel,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.copyWith(
+                                        color: AzureTheme.ink
+                                            .withValues(alpha: 0.65),
                                       ),
-                                    ),
-                                  );
-                                }).toList(),
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                'Current profile: ${_settings.videoProfileLabel}',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodySmall
-                                    ?.copyWith(
-                                      color: AzureTheme.ink
-                                          .withValues(alpha: 0.65),
-                                    ),
-                              ),
-                              SwitchListTile(
-                                contentPadding: EdgeInsets.zero,
-                                title: const Text('Low-light boost'),
-                                subtitle: const Text(
-                                    'Brighten the live preview in low-light conditions.'),
-                                value: _settings.lowLightBoost,
-                                onChanged: (value) => setState(
-                                  () => _settings =
-                                      _settings.copyWith(lowLightBoost: value),
                                 ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        SurfacePanel(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const _SectionTitle('Viewer Experience'),
-                              Text('Viewer priority',
-                                  style:
-                                      Theme.of(context).textTheme.titleMedium),
-                              const SizedBox(height: 12),
-                              Wrap(
-                                spacing: 8,
-                                children: ViewerPriorityMode.values.map((mode) {
-                                  return ChoiceChip(
-                                    label: Text(_viewerPriorityLabel(mode)),
-                                    selected: _settings.viewerPriority == mode,
-                                    onSelected: (_) => setState(
-                                      () => _settings = _settings.copyWith(
-                                          viewerPriority: mode),
-                                    ),
-                                  );
-                                }).toList(),
-                              ),
-                              const SizedBox(height: 16),
-                              Text('Video display',
-                                  style:
-                                      Theme.of(context).textTheme.titleMedium),
-                              const SizedBox(height: 12),
-                              Wrap(
-                                spacing: 8,
-                                children: VideoFitMode.values.map((mode) {
-                                  return ChoiceChip(
-                                    label: Text(mode == VideoFitMode.cover
-                                        ? 'Fill'
-                                        : 'Fit'),
-                                    selected: _settings.videoFit == mode,
-                                    onSelected: (_) => setState(
-                                      () => _settings =
-                                          _settings.copyWith(videoFit: mode),
-                                    ),
-                                  );
-                                }).toList(),
-                              ),
-                              SwitchListTile(
-                                contentPadding: EdgeInsets.zero,
-                                title: const Text('Connection report'),
-                                subtitle: const Text(
-                                    'Show network status card on the dashboard.'),
-                                value: _settings.showConnectionReport,
-                                onChanged: (value) => setState(
-                                  () => _settings = _settings.copyWith(
-                                      showConnectionReport: value),
+                                Slider(
+                                  min: 250,
+                                  max: 2500,
+                                  divisions: 9,
+                                  value:
+                                      _settings.maxVideoBitrateKbps.toDouble(),
+                                  label: _settings.bitrateLabel,
+                                  onChanged: _settings.powerSaveMode
+                                      ? null
+                                      : (value) => setState(
+                                            () =>
+                                                _settings = _settings.copyWith(
+                                              maxVideoBitrateKbps:
+                                                  value.round(),
+                                            ),
+                                          ),
                                 ),
-                              ),
-                            ],
+                                const SizedBox(height: 16),
+                                Text('Capture quality',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium),
+                                const SizedBox(height: 12),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children:
+                                      VideoQualityPreset.values.map((preset) {
+                                    return ChoiceChip(
+                                      label: Text(_qualityPresetLabel(preset)),
+                                      selected: _settings.videoQualityPreset ==
+                                          preset,
+                                      onSelected: _settings.powerSaveMode
+                                          ? null
+                                          : (_) => setState(
+                                                () => _settings =
+                                                    _settings.copyWith(
+                                                  videoQualityPreset: preset,
+                                                ),
+                                              ),
+                                    );
+                                  }).toList(),
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Current profile: ${_settings.videoProfileLabel}',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.copyWith(
+                                        color: AzureTheme.ink
+                                            .withValues(alpha: 0.65),
+                                      ),
+                                ),
+                                SwitchListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  title: const Text('Low-light boost'),
+                                  subtitle: Text(_settings.powerSaveMode
+                                      ? 'Disabled while Power save mode is active.'
+                                      : 'Brighten the live preview in low-light conditions.'),
+                                  value: _settings.powerSaveMode
+                                      ? false
+                                      : _settings.lowLightBoost,
+                                  onChanged: _settings.powerSaveMode
+                                      ? null
+                                      : (value) => setState(
+                                            () => _settings = _settings
+                                                .copyWith(lowLightBoost: value),
+                                          ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 16),
-                        ElevatedButton(
-                          onPressed: () => Navigator.of(context).pop(_settings),
-                          child: const Text('Apply settings'),
-                        ),
-                      ],
+                          const SizedBox(height: 12),
+                          SurfacePanel(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const _SectionTitle('Viewer Experience'),
+                                Text('Viewer priority',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium),
+                                const SizedBox(height: 12),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children:
+                                      ViewerPriorityMode.values.map((mode) {
+                                    return ChoiceChip(
+                                      label: Text(_viewerPriorityLabel(mode)),
+                                      selected:
+                                          _settings.viewerPriority == mode,
+                                      onSelected: (_) => setState(
+                                        () => _settings = _settings.copyWith(
+                                            viewerPriority: mode),
+                                      ),
+                                    );
+                                  }).toList(),
+                                ),
+                                const SizedBox(height: 16),
+                                Text('Video display',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium),
+                                const SizedBox(height: 12),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: VideoFitMode.values.map((mode) {
+                                    return ChoiceChip(
+                                      label: Text(mode == VideoFitMode.cover
+                                          ? 'Fill'
+                                          : 'Fit'),
+                                      selected: _settings.videoFit == mode,
+                                      onSelected: (_) => setState(
+                                        () => _settings =
+                                            _settings.copyWith(videoFit: mode),
+                                      ),
+                                    );
+                                  }).toList(),
+                                ),
+                                SwitchListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  title: const Text('Connection report'),
+                                  subtitle: const Text(
+                                      'Show network status card on the dashboard.'),
+                                  value: _settings.showConnectionReport,
+                                  onChanged: (value) => setState(
+                                    () => _settings = _settings.copyWith(
+                                        showConnectionReport: value),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          ElevatedButton(
+                            onPressed: () =>
+                                Navigator.of(context).pop(_settings),
+                            child: const Text('Apply settings'),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
