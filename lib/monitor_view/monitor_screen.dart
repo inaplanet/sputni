@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
@@ -7,6 +9,7 @@ import '../signaling/signaling_client.dart';
 import '../signaling/signaling_message.dart';
 import '../ui/azure_theme.dart';
 import '../utils/app_logger.dart';
+import '../utils/recording_storage.dart';
 import '../utils/room_security.dart';
 import '../webrtc/rtc_manager.dart';
 import '../widgets/app_shell_ui.dart';
@@ -29,6 +32,8 @@ class _MonitorScreenState extends State<MonitorScreen> {
   PairingMethod _pairingMethod = PairingMethod.roomId;
   String _status = 'Standby';
   String _connectionReport = 'P2P first · idle';
+  String? _recordingPath;
+  bool _didAutoOpenFullscreen = false;
 
   String get _resolvedRoomId {
     final value = _roomController.text.trim();
@@ -98,6 +103,9 @@ class _MonitorScreenState extends State<MonitorScreen> {
     rtc.onConnectionState = (state) {
       if (mounted) {
         setState(() => _status = _peerStateLabel(state));
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+          _maybeOpenFullscreenAfterConnect();
+        }
       }
     };
     rtc.onDiagnosticsChanged = (diagnostics) {
@@ -116,6 +124,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
       _rtc = rtc;
       _status = 'Waiting for camera';
       _connectionReport = rtc.connectionSummary;
+      _didAutoOpenFullscreen = false;
     });
   }
 
@@ -129,6 +138,99 @@ class _MonitorScreenState extends State<MonitorScreen> {
       _rtc = null;
       _status = 'Standby';
       _connectionReport = 'P2P first · idle';
+      _didAutoOpenFullscreen = false;
+    });
+  }
+
+  Future<void> _openSettings() async {
+    final updatedSettings = await showSettingsSheet(
+      context: context,
+      title: 'Monitor settings',
+      initialSettings: _settings,
+      turnAvailable: _config.hasTurnServer,
+      mode: SettingsSheetMode.monitor,
+    );
+
+    if (updatedSettings == null || !mounted) return;
+
+    setState(() => _settings = updatedSettings);
+    await _rtc?.updateSettings(_responsiveSettings(context));
+    _maybeOpenFullscreenAfterConnect();
+  }
+
+  Future<void> _openQrCodeModal(String payload) {
+    return showPairingQrCodeModal(
+      context: context,
+      payload: payload,
+      title: 'QR pairing',
+      subtitle: 'Share this monitor pairing code without opening the camera.',
+    );
+  }
+
+  Future<void> _openFullscreenPreview(StreamSettings effectiveSettings) {
+    final rtc = _rtc;
+    if (rtc == null) return Future.value();
+
+    return showFullscreenPreview(
+      context: context,
+      renderer: rtc.remoteRenderer,
+      objectFit: effectiveSettings.rtcVideoFit,
+      lowLightBoost: effectiveSettings.lowLightBoost,
+      profileLabel: effectiveSettings.videoDisplayLabel,
+    );
+  }
+
+  Future<void> _toggleRecording() async {
+    final rtc = _rtc;
+    if (rtc == null) return;
+
+    try {
+      if (rtc.isRecording) {
+        await rtc.stopRecording();
+        if (!mounted) return;
+        setState(() => _status = 'Recording saved');
+        return;
+      }
+
+      final recordingsDirectory = await resolveRecordingDirectory(_settings);
+
+      if (!await recordingsDirectory.exists()) {
+        await recordingsDirectory.create(recursive: true);
+      }
+
+      final filePath =
+          '${recordingsDirectory.path}${Platform.pathSeparator}monitor_${DateTime.now().millisecondsSinceEpoch}.mp4';
+
+      await rtc.startRecording(filePath);
+
+      if (!mounted) return;
+      setState(() {
+        _recordingPath = filePath;
+        _status = 'Recording locally';
+      });
+    } on StateError catch (error, stackTrace) {
+      AppLogger.error('Unable to start monitor recording', error, stackTrace);
+      if (!mounted) return;
+      setState(() => _status = error.message);
+    } catch (error, stackTrace) {
+      AppLogger.error('Unable to start monitor recording', error, stackTrace);
+      if (!mounted) return;
+      setState(() => _status = 'Recording unavailable');
+    }
+  }
+
+  void _maybeOpenFullscreenAfterConnect() {
+    if (!mounted ||
+        _didAutoOpenFullscreen ||
+        _rtc == null ||
+        !_settings.autoFullscreenOnConnect) {
+      return;
+    }
+
+    _didAutoOpenFullscreen = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _rtc == null) return;
+      _openFullscreenPreview(_responsiveSettings(context));
     });
   }
 
@@ -182,31 +284,6 @@ class _MonitorScreenState extends State<MonitorScreen> {
     }
   }
 
-  List<MetricBadge> _connectionHighlights(StreamSettings effectiveSettings) {
-    return [
-      MetricBadge(
-        label: effectiveSettings.viewerPriority.name.toUpperCase(),
-        icon: Icons.tune_rounded,
-        tone: MetricTone.neutral,
-      ),
-      MetricBadge(
-        label: effectiveSettings.videoFit == VideoFitMode.cover
-            ? 'Fill view'
-            : 'Fit view',
-        icon: effectiveSettings.videoFit == VideoFitMode.cover
-            ? Icons.crop_free_rounded
-            : Icons.fit_screen_rounded,
-        tone: MetricTone.neutral,
-      ),
-      MetricBadge(
-        label: '${_config.stunUrls.length} STUN servers',
-        icon: Icons.public_rounded,
-        tone:
-            _config.stunUrls.length > 1 ? MetricTone.good : MetricTone.warning,
-      ),
-    ];
-  }
-
   @override
   void dispose() {
     _roomController.dispose();
@@ -220,6 +297,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
     final isConnected = _rtc != null;
     final canConnect = !isConnected;
     final canDisconnect = isConnected;
+    final canRecord = _rtc?.supportsRecording ?? false;
     final effectiveSettings = _responsiveSettings(context);
     final pairingPayload = buildPairingPayload(
       roomId: _transmissionRoomId,
@@ -241,6 +319,18 @@ class _MonitorScreenState extends State<MonitorScreen> {
                   color: _statusColor(),
                 ),
                 const Spacer(),
+                if (_rtc?.isRecording ?? false)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 8),
+                    child: StatusPill(
+                      label: 'REC',
+                      color: Color(0xFFD7263D),
+                    ),
+                  ),
+                IconButton(
+                  onPressed: _openSettings,
+                  icon: const Icon(Icons.tune_rounded),
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -293,6 +383,15 @@ class _MonitorScreenState extends State<MonitorScreen> {
                                 ),
                               ),
                             ),
+                            Positioned(
+                              right: 12,
+                              bottom: 12,
+                              child: IconButton.filledTonal(
+                                onPressed: () =>
+                                    _openFullscreenPreview(effectiveSettings),
+                                icon: const Icon(Icons.fullscreen_rounded),
+                              ),
+                            ),
                           ],
                         ),
                 ),
@@ -302,66 +401,46 @@ class _MonitorScreenState extends State<MonitorScreen> {
         ),
       ),
       panels: [
-        if (_settings.showConnectionReport)
-          ConnectionReportPanel(
-            title: 'Connection report',
-            summary:
-                'Route status: $_connectionReport. Monitor sessions stay optimized for direct delivery first and keep relay as fallback only.',
-            highlights: _connectionHighlights(effectiveSettings),
-            statusTone: _statusTone(),
-          ),
         SurfacePanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               PairingMethodTabs(
                 activeMethod: _pairingMethod,
-                onChanged: (method) => setState(() => _pairingMethod = method),
+                onChanged: (method) {
+                  if (method == PairingMethod.qrCode) {
+                    _openQrCodeModal(pairingPayload);
+                    return;
+                  }
+                  setState(() => _pairingMethod = method);
+                },
               ),
               const SizedBox(height: 16),
-              if (_pairingMethod == PairingMethod.roomId)
-                TextField(
-                  controller: _roomController,
-                  decoration: const InputDecoration(labelText: 'Room ID'),
-                  onChanged: (_) => setState(() {}),
-                )
-              else
-                PairingQrCodeCard(
-                  payload: pairingPayload,
-                  title: 'QR pairing',
-                  subtitle:
-                      'Share this monitor pairing code without opening the camera.',
-                ),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  MetricBadge(
-                    label: _settings.viewerPriority.name.toUpperCase(),
-                    icon: Icons.tune_rounded,
-                  ),
-                  MetricBadge(
-                    label: _settings.videoFit == VideoFitMode.cover
-                        ? 'Fill view'
-                        : 'Fit view',
-                    icon: _settings.videoFit == VideoFitMode.cover
-                        ? Icons.crop_free_rounded
-                        : Icons.fit_screen_rounded,
-                  ),
-                  MetricBadge(
-                    label: effectiveSettings.videoProfileLabel,
-                    icon: Icons.monitor_rounded,
-                  ),
-                  MetricBadge(
-                    label: '${_config.stunUrls.length} STUN servers',
-                    icon: Icons.public_rounded,
-                  ),
-                ],
+              TextField(
+                controller: _roomController,
+                decoration: const InputDecoration(labelText: 'Room ID'),
+                onChanged: (_) => setState(() {}),
               ),
             ],
           ),
         ),
+        if (_settings.showConnectionReport)
+          ConnectionReportPanel(
+            title: 'Connection report',
+            summary:
+                'Route status: $_connectionReport. Monitor sessions stay optimized for direct delivery first and keep relay as fallback only.',
+            highlights: const [],
+            statusTone: _statusTone(),
+          ),
+        if (_recordingPath != null)
+          SurfacePanel(
+            child: Text(
+              'Recording saved to $_recordingPath',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: AzureTheme.ink.withValues(alpha: 0.72),
+                  ),
+            ),
+          ),
       ],
       actions: [
         ElevatedButton(
@@ -386,19 +465,19 @@ class _MonitorScreenState extends State<MonitorScreen> {
             ],
           ),
         ),
+        if (isConnected)
+          OutlinedButton(
+            onPressed: canRecord ? _toggleRecording : null,
+            child: Text(
+              canRecord
+                  ? ((_rtc?.isRecording ?? false) ? 'Stop rec' : 'Start rec')
+                  : 'Recording unavailable',
+            ),
+          ),
       ],
     );
   }
 
-  double _resolvedMonitorAspectRatio(StreamSettings effectiveSettings) {
-    final renderer = _rtc?.remoteRenderer;
-    final videoWidth = renderer?.videoWidth ?? 0;
-    final videoHeight = renderer?.videoHeight ?? 0;
-
-    if (videoWidth > 0 && videoHeight > 0) {
-      return videoWidth / videoHeight;
-    }
-
-    return effectiveSettings.videoProfile.previewAspectRatio;
-  }
+  double _resolvedMonitorAspectRatio(StreamSettings effectiveSettings) =>
+      effectiveSettings.videoProfile.previewAspectRatio;
 }

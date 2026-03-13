@@ -8,16 +8,16 @@ import 'ui/azure_theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const AetherLinkApp());
+  runApp(const TeleckApp());
 }
 
-class AetherLinkApp extends StatelessWidget {
-  const AetherLinkApp({super.key});
+class TeleckApp extends StatelessWidget {
+  const TeleckApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'AetherLink',
+      title: 'Teleck',
       theme: AzureTheme.theme(),
       initialRoute: AppRoutes.home,
       routes: {
@@ -67,7 +67,7 @@ class _HomeScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'AetherLink',
+                      'Teleck',
                       style: Theme.of(context)
                           .textTheme
                           .displaySmall

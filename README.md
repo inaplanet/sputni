@@ -1,6 +1,6 @@
-# AetherLink (Flutter + WebRTC)
+# Teleck (Flutter + WebRTC)
 
-AetherLink is a cross-platform Flutter app where one device runs as **Camera** (sends video) and another as **Monitor** (receives video). Signaling runs over secure WebSocket (`wss://`) and media is protected by WebRTC DTLS/SRTP.
+Teleck is a cross-platform Flutter app where one device runs as **Camera** (sends video) and another as **Monitor** (receives video). Signaling runs over secure WebSocket (`wss://`) and media is protected by WebRTC DTLS/SRTP.
 
 ## Architecture
 
@@ -39,9 +39,9 @@ flutter run \
   --dart-define=SIGNALING_URL=wss://your-signal.example/ws \
   --dart-define=ENABLE_TURN=true \
   --dart-define=STUN_URL=stun:stun.l.google.com:19302 \
-  --dart-define=TURN_URL=turn:turn.example.com:3478 \
-  --dart-define=TURN_USERNAME=user \
-  --dart-define=TURN_PASSWORD=pass
+  --dart-define=TURN_URLS=turn:turn.teleck.live:3478?transport=udp,turn:turn.teleck.live:3478?transport=tcp,turns:turn.teleck.live:5349?transport=tcp \
+  --dart-define=TURN_USERNAME=<generated-username> \
+  --dart-define=TURN_CREDENTIAL=<generated-credential>
 ```
 
 ## Android platform config
@@ -88,6 +88,7 @@ Includes:
 
 ## Notes
 
-- TURN is optional and toggled by `ENABLE_TURN`.
+- TURN remains relay-only and is armed after direct P2P connectivity fails.
+- With Coturn `use-auth-secret`, keep `static-auth-secret` on the server and provide generated `TURN_USERNAME` and `TURN_CREDENTIAL` values to the client.
 - `DtlsSrtpKeyAgreement` is requested in peer connection options for encrypted media transport.
 - Reconnection logic is implemented in the signaling client with bounded retries.

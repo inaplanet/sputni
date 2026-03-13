@@ -1,6 +1,9 @@
 import 'dart:ui';
 
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../config/stream_settings.dart';
 import '../ui/azure_theme.dart';
@@ -283,12 +286,16 @@ class StatusPill extends StatelessWidget {
 
 enum MetricTone { neutral, good, warning, danger }
 
+enum SettingsSheetMode { camera, monitor }
+
 class MetricBadge extends StatefulWidget {
   const MetricBadge({
     required this.label,
     required this.icon,
     this.tone = MetricTone.neutral,
     this.monochrome = false,
+    this.showLabelByDefault = false,
+    this.onPressed,
     super.key,
   });
 
@@ -296,6 +303,8 @@ class MetricBadge extends StatefulWidget {
   final IconData icon;
   final MetricTone tone;
   final bool monochrome;
+  final bool showLabelByDefault;
+  final VoidCallback? onPressed;
 
   @override
   State<MetricBadge> createState() => _MetricBadgeState();
@@ -306,7 +315,8 @@ class _MetricBadgeState extends State<MetricBadge>
   bool _isHovered = false;
   bool _isTappedOpen = false;
 
-  bool get _isExpanded => _usesHover ? _isHovered : _isTappedOpen;
+  bool get _isExpanded =>
+      widget.showLabelByDefault || (_usesHover ? _isHovered : _isTappedOpen);
 
   bool get _usesHover {
     switch (Theme.of(context).platform) {
@@ -329,10 +339,12 @@ class _MetricBadgeState extends State<MetricBadge>
       onEnter: _usesHover ? (_) => setState(() => _isHovered = true) : null,
       onExit: _usesHover ? (_) => setState(() => _isHovered = false) : null,
       child: GestureDetector(
-        onTap: _usesHover
-            ? null
-            : () => setState(() => _isTappedOpen = !_isTappedOpen),
+        onTap: widget.onPressed ??
+            (_usesHover
+                ? null
+                : () => setState(() => _isTappedOpen = !_isTappedOpen)),
         child: AnimatedContainer(
+          alignment: Alignment.center,
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOut,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -459,21 +471,61 @@ class ConnectionReportPanel extends StatelessWidget {
                   height: 1.4,
                 ),
           ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: highlights
-                .map(
-                  (highlight) => MetricBadge(
-                    label: highlight.label,
-                    icon: highlight.icon,
-                    monochrome: true,
-                  ),
-                )
-                .toList(),
-          ),
+          if (highlights.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 10,
+              runSpacing: 10,
+              children: highlights,
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+class SettingsShortcutPanel extends StatelessWidget {
+  const SettingsShortcutPanel({
+    required this.shortcuts,
+    super.key,
+  });
+
+  final List<Widget> shortcuts;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final deviceClass = DeviceViewportClassResolver.fromViewport(
+      screenWidth: size.width,
+      screenHeight: size.height,
+    );
+
+    return SurfacePanel(
+      padding: const EdgeInsets.all(14),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (deviceClass == DeviceViewportClass.phone) {
+            return Column(
+              children: shortcuts
+                  .map(
+                    (shortcut) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: SizedBox(width: double.infinity, child: shortcut),
+                    ),
+                  )
+                  .toList(),
+            );
+          }
+
+          return Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
+            children: shortcuts,
+          );
+        },
       ),
     );
   }
@@ -491,11 +543,83 @@ class _MetricColors {
   final Color foreground;
 }
 
+Future<void> showFullscreenPreview({
+  required BuildContext context,
+  required RTCVideoRenderer renderer,
+  required RTCVideoViewObjectFit objectFit,
+  required String profileLabel,
+  bool mirror = false,
+  bool lowLightBoost = false,
+}) {
+  return Navigator.of(context).push(
+    PageRouteBuilder<void>(
+      opaque: false,
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return Scaffold(
+          backgroundColor: Colors.black,
+          body: SafeArea(
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                RTCVideoView(
+                  renderer,
+                  mirror: mirror,
+                  objectFit: objectFit,
+                ),
+                if (lowLightBoost)
+                  Container(
+                    color: Colors.lightBlueAccent.withValues(alpha: 0.08),
+                  ),
+                Positioned(
+                  top: 16,
+                  left: 16,
+                  child: IconButton.filledTonal(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ),
+                Positioned(
+                  right: 16,
+                  bottom: 16,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.14),
+                      ),
+                    ),
+                    child: Text(
+                      profileLabel,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+      transitionsBuilder: (context, animation, secondaryAnimation, child) {
+        return FadeTransition(opacity: animation, child: child);
+      },
+    ),
+  );
+}
+
 Future<StreamSettings?> showSettingsSheet({
   required BuildContext context,
   required String title,
   required StreamSettings initialSettings,
   required bool turnAvailable,
+  SettingsSheetMode mode = SettingsSheetMode.camera,
 }) {
   return showModalBottomSheet<StreamSettings>(
     context: context,
@@ -505,6 +629,7 @@ Future<StreamSettings?> showSettingsSheet({
       title: title,
       initialSettings: initialSettings,
       turnAvailable: turnAvailable,
+      mode: mode,
     ),
   );
 }
@@ -514,11 +639,13 @@ class _SettingsSheet extends StatefulWidget {
     required this.title,
     required this.initialSettings,
     required this.turnAvailable,
+    required this.mode,
   });
 
   final String title;
   final StreamSettings initialSettings;
   final bool turnAvailable;
+  final SettingsSheetMode mode;
 
   @override
   State<_SettingsSheet> createState() => _SettingsSheetState();
@@ -526,6 +653,8 @@ class _SettingsSheet extends StatefulWidget {
 
 class _SettingsSheetState extends State<_SettingsSheet> {
   late StreamSettings _settings = widget.initialSettings;
+
+  bool get _supportsDirectoryPicker => !kIsWeb;
 
   void _setPowerSaveMode(bool enabled) {
     setState(() {
@@ -547,9 +676,44 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     });
   }
 
+  Future<void> _pickRecordingDirectory() async {
+    try {
+      final selectedPath = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Choose recording folder',
+      );
+
+      if (!mounted || selectedPath == null || selectedPath.trim().isEmpty) {
+        return;
+      }
+
+      setState(() {
+        _settings = _settings.copyWith(
+          recordingDirectoryMode: RecordingDirectoryMode.custom,
+          customRecordingDirectoryPath: selectedPath.trim(),
+        );
+      });
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to open the folder picker on this device.'),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
+    final isCameraMode = widget.mode == SettingsSheetMode.camera;
+    final deviceClass = DeviceViewportClassResolver.fromViewport(
+      screenWidth: mediaQuery.size.width,
+      screenHeight: mediaQuery.size.height,
+    );
+    final selectedDisplayMode = _settings.videoDisplayMode ??
+        (deviceClass == DeviceViewportClass.phone
+            ? VideoDisplayMode.portrait
+            : VideoDisplayMode.landscape);
     const horizontalPadding = 20.0;
     const verticalPadding = 28.0;
 
@@ -604,31 +768,46 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 const _SectionTitle('Live Connection'),
-                                SwitchListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  title: const Text('Power save mode'),
-                                  subtitle: const Text(
-                                      'Lower capture load, cap bitrate, disable mic, and turn off low-light processing to reduce battery use.'),
-                                  value: _settings.powerSaveMode,
-                                  onChanged: _setPowerSaveMode,
-                                ),
-                                SwitchListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  title: const Text('Enable voice'),
-                                  subtitle: Text(_settings.powerSaveMode
-                                      ? 'Disabled while Power save mode is active.'
-                                      : 'Capture microphone audio together with video.'),
-                                  value: _settings.powerSaveMode
-                                      ? false
-                                      : _settings.enableMicrophone,
-                                  onChanged: _settings.powerSaveMode
-                                      ? null
-                                      : (value) => setState(
-                                            () => _settings =
-                                                _settings.copyWith(
-                                                    enableMicrophone: value),
-                                          ),
-                                ),
+                                if (isCameraMode)
+                                  SwitchListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: const Text('Power save mode'),
+                                    subtitle: const Text(
+                                        'Lower capture load, cap bitrate, disable mic, and turn off low-light processing to reduce battery use.'),
+                                    value: _settings.powerSaveMode,
+                                    onChanged: _setPowerSaveMode,
+                                  ),
+                                if (isCameraMode)
+                                  SwitchListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: const Text(
+                                        'Automatic power saving mode'),
+                                    subtitle: const Text(
+                                        'Dim the camera screen after 3 minutes without interaction.'),
+                                    value: _settings.automaticPowerSavingMode,
+                                    onChanged: (value) => setState(
+                                      () => _settings = _settings.copyWith(
+                                          automaticPowerSavingMode: value),
+                                    ),
+                                  ),
+                                if (isCameraMode)
+                                  SwitchListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: const Text('Enable voice'),
+                                    subtitle: Text(_settings.powerSaveMode
+                                        ? 'Disabled while Power save mode is active.'
+                                        : 'Capture microphone audio together with video.'),
+                                    value: _settings.powerSaveMode
+                                        ? false
+                                        : _settings.enableMicrophone,
+                                    onChanged: _settings.powerSaveMode
+                                        ? null
+                                        : (value) => setState(
+                                              () => _settings =
+                                                  _settings.copyWith(
+                                                      enableMicrophone: value),
+                                            ),
+                                  ),
                                 SwitchListTile(
                                   contentPadding: EdgeInsets.zero,
                                   title: const Text('Prefer direct P2P'),
@@ -658,6 +837,18 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                           )
                                       : null,
                                 ),
+                                SwitchListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  title:
+                                      const Text('Use multiple STUN servers'),
+                                  subtitle: const Text(
+                                      'Cycle between the primary STUN route only or the full STUN server pool.'),
+                                  value: _settings.useMultipleStunServers,
+                                  onChanged: (value) => setState(
+                                    () => _settings = _settings.copyWith(
+                                        useMultipleStunServers: value),
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -666,94 +857,241 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const _SectionTitle('Video Quality'),
-                                Text('Lower video bitrate',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleMedium),
+                                const _SectionTitle('Recording'),
                                 Text(
-                                  _settings.bitrateLabel,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodySmall
-                                      ?.copyWith(
-                                        color: AzureTheme.ink
-                                            .withValues(alpha: 0.65),
-                                      ),
+                                  'Save recordings to',
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium,
                                 ),
-                                Slider(
-                                  min: 250,
-                                  max: 2500,
-                                  divisions: 9,
-                                  value:
-                                      _settings.maxVideoBitrateKbps.toDouble(),
-                                  label: _settings.bitrateLabel,
-                                  onChanged: _settings.powerSaveMode
-                                      ? null
-                                      : (value) => setState(
-                                            () =>
-                                                _settings = _settings.copyWith(
-                                              maxVideoBitrateKbps:
-                                                  value.round(),
-                                            ),
-                                          ),
-                                ),
-                                const SizedBox(height: 16),
-                                Text('Capture quality',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleMedium),
                                 const SizedBox(height: 12),
                                 Wrap(
                                   spacing: 8,
                                   runSpacing: 8,
-                                  children:
-                                      VideoQualityPreset.values.map((preset) {
-                                    return ChoiceChip(
-                                      label: Text(_qualityPresetLabel(preset)),
-                                      selected: _settings.videoQualityPreset ==
-                                          preset,
-                                      onSelected: _settings.powerSaveMode
-                                          ? null
-                                          : (_) => setState(
-                                                () => _settings =
-                                                    _settings.copyWith(
-                                                  videoQualityPreset: preset,
-                                                ),
-                                              ),
-                                    );
-                                  }).toList(),
+                                  children: [
+                                    ChoiceChip(
+                                      label: const Text('Documents'),
+                                      selected:
+                                          _settings.recordingDirectoryMode ==
+                                              RecordingDirectoryMode.documents,
+                                      onSelected: (_) => setState(
+                                        () => _settings = _settings.copyWith(
+                                          recordingDirectoryMode:
+                                              RecordingDirectoryMode.documents,
+                                        ),
+                                      ),
+                                    ),
+                                    ChoiceChip(
+                                      label: const Text('App storage'),
+                                      selected:
+                                          _settings.recordingDirectoryMode ==
+                                              RecordingDirectoryMode.appSupport,
+                                      onSelected: (_) => setState(
+                                        () => _settings = _settings.copyWith(
+                                          recordingDirectoryMode:
+                                              RecordingDirectoryMode.appSupport,
+                                        ),
+                                      ),
+                                    ),
+                                    ChoiceChip(
+                                      label: const Text('Temporary'),
+                                      selected:
+                                          _settings.recordingDirectoryMode ==
+                                              RecordingDirectoryMode.temporary,
+                                      onSelected: (_) => setState(
+                                        () => _settings = _settings.copyWith(
+                                          recordingDirectoryMode:
+                                              RecordingDirectoryMode.temporary,
+                                        ),
+                                      ),
+                                    ),
+                                    if (_settings.hasCustomRecordingDirectory)
+                                      ChoiceChip(
+                                        label: const Text('Custom folder'),
+                                        selected:
+                                            _settings.recordingDirectoryMode ==
+                                                RecordingDirectoryMode.custom,
+                                        onSelected: (_) => setState(
+                                          () => _settings = _settings.copyWith(
+                                            recordingDirectoryMode:
+                                                RecordingDirectoryMode.custom,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
                                 ),
-                                const SizedBox(height: 12),
+                                const SizedBox(height: 16),
+                                if (_supportsDirectoryPicker)
+                                  OutlinedButton.icon(
+                                    onPressed: _pickRecordingDirectory,
+                                    icon: const Icon(
+                                      Icons.folder_open_rounded,
+                                    ),
+                                    label: Text(
+                                      _settings.hasCustomRecordingDirectory
+                                          ? 'Change custom folder'
+                                          : 'Choose custom folder',
+                                    ),
+                                  ),
+                                if (_supportsDirectoryPicker)
+                                  const SizedBox(height: 12),
                                 Text(
-                                  'Current profile: ${_settings.videoProfileLabel}',
+                                  _settings.recordingLocationLabel,
+                                  style: Theme.of(context).textTheme.titleSmall,
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  _settings.recordingLocationDescription,
                                   style: Theme.of(context)
                                       .textTheme
                                       .bodySmall
                                       ?.copyWith(
                                         color: AzureTheme.ink
                                             .withValues(alpha: 0.65),
+                                        height: 1.4,
                                       ),
-                                ),
-                                SwitchListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  title: const Text('Low-light boost'),
-                                  subtitle: Text(_settings.powerSaveMode
-                                      ? 'Disabled while Power save mode is active.'
-                                      : 'Brighten the live preview in low-light conditions.'),
-                                  value: _settings.powerSaveMode
-                                      ? false
-                                      : _settings.lowLightBoost,
-                                  onChanged: _settings.powerSaveMode
-                                      ? null
-                                      : (value) => setState(
-                                            () => _settings = _settings
-                                                .copyWith(lowLightBoost: value),
-                                          ),
                                 ),
                               ],
                             ),
                           ),
+                          if (isCameraMode) ...[
+                            const SizedBox(height: 12),
+                            SurfacePanel(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const _SectionTitle('Video Quality'),
+                                  Text('Lower video bitrate',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium),
+                                  Text(
+                                    _settings.bitrateLabel,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
+                                          color: AzureTheme.ink
+                                              .withValues(alpha: 0.65),
+                                        ),
+                                  ),
+                                  Slider(
+                                    min: 250,
+                                    max: 2500,
+                                    divisions: 9,
+                                    value: _settings.maxVideoBitrateKbps
+                                        .toDouble(),
+                                    label: _settings.bitrateLabel,
+                                    onChanged: _settings.powerSaveMode
+                                        ? null
+                                        : (value) => setState(
+                                              () => _settings =
+                                                  _settings.copyWith(
+                                                maxVideoBitrateKbps:
+                                                    value.round(),
+                                              ),
+                                            ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text('Capture quality',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium),
+                                  const SizedBox(height: 12),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: VideoQualityPreset.values.map((
+                                      preset,
+                                    ) {
+                                      return ChoiceChip(
+                                        label:
+                                            Text(_qualityPresetLabel(preset)),
+                                        selected:
+                                            _settings.videoQualityPreset ==
+                                                preset,
+                                        onSelected: _settings.powerSaveMode
+                                            ? null
+                                            : (_) => setState(
+                                                  () => _settings =
+                                                      _settings.copyWith(
+                                                    videoQualityPreset: preset,
+                                                  ),
+                                                ),
+                                      );
+                                    }).toList(),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    'Current profile: ${_settings.videoProfileLabel}',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
+                                          color: AzureTheme.ink
+                                              .withValues(alpha: 0.65),
+                                        ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text('Low-Light Filter',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium),
+                                  const SizedBox(height: 12),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: ExposureMode.values.map((mode) {
+                                      return ChoiceChip(
+                                        label: Text(_exposureModeLabel(mode)),
+                                        selected:
+                                            _settings.exposureMode == mode,
+                                        onSelected: (_) => setState(
+                                          () => _settings = _settings.copyWith(
+                                            exposureMode: mode,
+                                          ),
+                                        ),
+                                      );
+                                    }).toList(),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text('Camera mode',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium),
+                                  const SizedBox(height: 12),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children:
+                                        CameraLightMode.values.map((mode) {
+                                      return ChoiceChip(
+                                        label:
+                                            Text(_cameraLightModeLabel(mode)),
+                                        selected:
+                                            _settings.cameraLightMode == mode,
+                                        onSelected: (_) => setState(
+                                          () => _settings = _settings.copyWith(
+                                            cameraLightMode: mode,
+                                          ),
+                                        ),
+                                      );
+                                    }).toList(),
+                                  ),
+                                  SwitchListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: const Text('Activity detection'),
+                                    subtitle: const Text(
+                                        'Detect scene/object movement using live camera motion heuristics.'),
+                                    value: _settings.activityDetectionEnabled,
+                                    onChanged: (value) => setState(
+                                      () => _settings = _settings.copyWith(
+                                          activityDetectionEnabled: value),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 12),
                           SurfacePanel(
                             child: Column(
@@ -790,15 +1128,17 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                 Wrap(
                                   spacing: 8,
                                   runSpacing: 8,
-                                  children: VideoFitMode.values.map((mode) {
+                                  children: VideoDisplayMode.values.map((mode) {
                                     return ChoiceChip(
-                                      label: Text(mode == VideoFitMode.cover
-                                          ? 'Fill'
-                                          : 'Fit'),
-                                      selected: _settings.videoFit == mode,
+                                      label: Text(
+                                        mode == VideoDisplayMode.landscape
+                                            ? 'Desktop View'
+                                            : 'Mobile View',
+                                      ),
+                                      selected: selectedDisplayMode == mode,
                                       onSelected: (_) => setState(
-                                        () => _settings =
-                                            _settings.copyWith(videoFit: mode),
+                                        () => _settings = _settings.copyWith(
+                                            videoDisplayMode: mode),
                                       ),
                                     );
                                   }).toList(),
@@ -814,6 +1154,43 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                                         showConnectionReport: value),
                                   ),
                                 ),
+                                if (!isCameraMode)
+                                  SwitchListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: const Text('Play camera audio'),
+                                    subtitle: const Text(
+                                        'Allow monitor mode to play incoming microphone audio from the camera stream.'),
+                                    value: _settings.enableMonitorAudio,
+                                    onChanged: (value) => setState(
+                                      () => _settings = _settings.copyWith(
+                                          enableMonitorAudio: value),
+                                    ),
+                                  ),
+                                if (!isCameraMode)
+                                  SwitchListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: const Text(
+                                        'Auto fullscreen on connect'),
+                                    subtitle: const Text(
+                                        'Open the live viewer in fullscreen automatically once the secure link becomes active.'),
+                                    value: _settings.autoFullscreenOnConnect,
+                                    onChanged: (value) => setState(
+                                      () => _settings = _settings.copyWith(
+                                          autoFullscreenOnConnect: value),
+                                    ),
+                                  ),
+                                if (!isCameraMode)
+                                  SwitchListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: const Text('Low-light boost'),
+                                    subtitle: const Text(
+                                        'Apply extra brightness to the incoming monitor preview.'),
+                                    value: _settings.lowLightBoost,
+                                    onChanged: (value) => setState(
+                                      () => _settings = _settings.copyWith(
+                                          lowLightBoost: value),
+                                    ),
+                                  ),
                               ],
                             ),
                           ),
@@ -857,6 +1234,26 @@ class _SettingsSheetState extends State<_SettingsSheet> {
         return 'Balanced';
       case VideoQualityPreset.high:
         return 'High';
+    }
+  }
+
+  String _exposureModeLabel(ExposureMode mode) {
+    switch (mode) {
+      case ExposureMode.high:
+        return 'High exposure';
+      case ExposureMode.balanced:
+        return 'Balanced exposure';
+      case ExposureMode.low:
+        return 'Low exposure';
+    }
+  }
+
+  String _cameraLightModeLabel(CameraLightMode mode) {
+    switch (mode) {
+      case CameraLightMode.day:
+        return 'Day mode';
+      case CameraLightMode.night:
+        return 'Night mode';
     }
   }
 }

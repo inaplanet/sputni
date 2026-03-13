@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../config/app_config.dart';
@@ -11,6 +12,11 @@ import '../utils/app_logger.dart';
 enum PeerRole { camera, monitor }
 
 class RtcManager {
+  static const MethodChannel _nativeRecordingChannel =
+      MethodChannel('teleck/native_recording');
+  static const MethodChannel _permissionsChannel =
+      MethodChannel('teleck/permissions');
+
   RtcManager({
     required this.role,
     required this.config,
@@ -25,11 +31,21 @@ class RtcManager {
   MediaStream? _localStream;
   MediaRecorder? _mediaRecorder;
   Timer? _turnFallbackTimer;
+  Timer? _activityPollTimer;
   bool _isTurnFallbackActive = false;
   bool _isIceRestartInFlight = false;
   bool _seenRelayCandidate = false;
   bool _seenSrflxCandidate = false;
   bool _seenHostCandidate = false;
+  bool _activityDetected = false;
+  bool _activityProbeInFlight = false;
+  int? _lastVideoBytesSent;
+  bool _isNativeRecording = false;
+  String? _captureWarning;
+  bool _recordingApiAvailable = !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS);
 
   final localRenderer = RTCVideoRenderer();
   final remoteRenderer = RTCVideoRenderer();
@@ -37,9 +53,21 @@ class RtcManager {
   void Function(SignalingMessage message)? onSignal;
   void Function(RTCPeerConnectionState state)? onConnectionState;
   void Function(String diagnostics)? onDiagnosticsChanged;
+  void Function(bool activityDetected)? onActivityChanged;
 
   bool get isTurnFallbackActive => _isTurnFallbackActive;
-  bool get isRecording => _mediaRecorder != null;
+  bool get isRecording => _mediaRecorder != null || _isNativeRecording;
+  StreamSettings get settings => _settings;
+  String? get captureWarning => _captureWarning;
+  bool get supportsRecording {
+    if (!_recordingApiAvailable) return false;
+    if (role == PeerRole.camera) return true;
+
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+  }
+
+  bool get supportsLocalRecording => supportsRecording;
   String get connectionSummary => _buildConnectionSummary();
 
   Future<void> initialize() async {
@@ -47,7 +75,10 @@ class RtcManager {
     await remoteRenderer.initialize();
 
     _peerConnection = await createPeerConnection(
-      config.peerConnectionConfiguration(includeTurn: false),
+      config.peerConnectionConfiguration(
+        includeTurn: false,
+        useMultipleStunServers: _settings.useMultipleStunServers,
+      ),
       {
         'mandatory': {},
         'optional': [
@@ -81,7 +112,7 @@ class RtcManager {
     _peerConnection!.onTrack = (RTCTrackEvent event) {
       if (event.streams.isNotEmpty) {
         remoteRenderer.srcObject = event.streams.first;
-        remoteRenderer.muted = false;
+        _applyRemoteAudioPlaybackSetting();
       }
     };
 
@@ -90,6 +121,7 @@ class RtcManager {
     }
 
     _scheduleTurnFallback();
+    _configureActivityDetection();
     _emitDiagnostics();
   }
 
@@ -126,24 +158,28 @@ class RtcManager {
     }
     debugPrint('====== END DEVICE LIST ======');
 
-    final mediaConstraints = {
-      'audio': _settings.enableMicrophone,
-      'video': {
-        'facingMode': 'environment',
-        'width': _settings.videoProfile.width,
-        'height': _settings.videoProfile.height,
-        'frameRate': _settings.videoProfile.frameRate,
-      },
-    };
+    final mediaConstraints = _buildLocalMediaConstraints(
+      includeAudio: _settings.enableMicrophone,
+    );
 
     debugPrint(
         'RTC: requesting getUserMedia with constraints: $mediaConstraints');
 
-    _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+    _localStream = await _getUserMediaWithFallback(
+      mediaConstraints,
+      allowAudioFallback: _settings.enableMicrophone,
+    );
 
     debugPrint('RTC: local stream created: ${_localStream?.id}');
     debugPrint('RTC: video tracks = ${_localStream?.getVideoTracks().length}');
     debugPrint('RTC: audio tracks = ${_localStream?.getAudioTracks().length}');
+
+    if (_settings.enableMicrophone &&
+        !(_localStream?.getAudioTracks().isNotEmpty ?? false) &&
+        _captureWarning == null) {
+      _captureWarning =
+          'Microphone is unavailable. Live started without audio.';
+    }
 
     localRenderer.srcObject = _localStream;
     if ((_localStream?.getAudioTracks().isNotEmpty ?? false)) {
@@ -188,12 +224,15 @@ class RtcManager {
   }
 
   Future<void> updateSettings(StreamSettings settings) async {
+    final previousSettings = _settings;
     final shouldReconfigureCapture = role == PeerRole.camera &&
         _localStream != null &&
-        (_settings.enableMicrophone != settings.enableMicrophone ||
-            _settings.videoProfile.width != settings.videoProfile.width ||
-            _settings.videoProfile.height != settings.videoProfile.height ||
-            _settings.videoProfile.frameRate !=
+        (previousSettings.enableMicrophone != settings.enableMicrophone ||
+            previousSettings.videoProfile.width !=
+                settings.videoProfile.width ||
+            previousSettings.videoProfile.height !=
+                settings.videoProfile.height ||
+            previousSettings.videoProfile.frameRate !=
                 settings.videoProfile.frameRate);
 
     _settings = settings;
@@ -202,6 +241,16 @@ class RtcManager {
       await _restartLocalCapture();
     }
 
+    if (previousSettings.useMultipleStunServers !=
+        settings.useMultipleStunServers) {
+      await _applyIceServerSettings();
+    }
+
+    if (previousSettings.enableMonitorAudio != settings.enableMonitorAudio) {
+      _applyRemoteAudioPlaybackSetting();
+    }
+
+    _configureActivityDetection();
     _scheduleTurnFallback();
     await _applyVideoBitrateSettings();
     _emitDiagnostics();
@@ -254,42 +303,113 @@ class RtcManager {
 
   Future<void> dispose() async {
     _turnFallbackTimer?.cancel();
+    _activityPollTimer?.cancel();
     await stopRecording();
-    await _localStream?.dispose();
+    await _releaseLocalStream();
     await _peerConnection?.close();
+    _peerConnection = null;
+    remoteRenderer.srcObject = null;
     await localRenderer.dispose();
     await remoteRenderer.dispose();
   }
 
   Future<void> startRecording(String path) async {
-    if (role != PeerRole.camera) {
-      throw StateError('Recording is only available in camera mode.');
+    if (!supportsRecording) {
+      throw StateError(role == PeerRole.monitor
+          ? 'Monitor recording is unavailable on this platform.'
+          : 'Local recording is unavailable on this platform.');
     }
     if (_mediaRecorder != null) return;
 
-    final stream = _localStream;
+    final stream =
+        role == PeerRole.camera ? _localStream : remoteRenderer.srcObject;
     if (stream == null) {
-      throw StateError('Local stream is not initialized.');
+      throw StateError(role == PeerRole.monitor
+          ? 'Remote stream is not initialized.'
+          : 'Local stream is not initialized.');
+    }
+
+    if (role == PeerRole.camera &&
+        defaultTargetPlatform == TargetPlatform.macOS) {
+      await _startNativeMacosRecording(path);
+      return;
     }
 
     final videoTracks = stream.getVideoTracks();
-    if (videoTracks.isEmpty) {
-      throw StateError('No local video track available for recording.');
+    final audioTracks = stream.getAudioTracks();
+    final audioChannel = switch (role) {
+      PeerRole.camera =>
+        audioTracks.isNotEmpty ? RecorderAudioChannel.INPUT : null,
+      PeerRole.monitor => _settings.enableMonitorAudio && audioTracks.isNotEmpty
+          ? RecorderAudioChannel.OUTPUT
+          : null,
+    };
+
+    if (audioChannel == null && videoTracks.isEmpty) {
+      throw StateError(role == PeerRole.monitor
+          ? 'No remote video or audio track available for recording.'
+          : 'No local video or audio track available for recording.');
     }
 
     final recorder = MediaRecorder();
-    await recorder.start(
-      path,
-      videoTrack: videoTracks.first,
-      audioChannel:
-          _settings.enableMicrophone ? RecorderAudioChannel.INPUT : null,
-    );
+    try {
+      await recorder.start(
+        path,
+        videoTrack: videoTracks.isEmpty ? null : videoTracks.first,
+        audioChannel: audioChannel,
+      );
+    } on MissingPluginException {
+      _recordingApiAvailable = false;
+      throw StateError(role == PeerRole.monitor
+          ? 'Monitor recording is unavailable on this platform.'
+          : 'Local recording is unavailable on this platform.');
+    }
     _mediaRecorder = recorder;
   }
 
   Future<void> stopRecording() async {
+    if (_isNativeRecording) {
+      try {
+        await _nativeRecordingChannel.invokeMethod<String>('stopRecording');
+      } on MissingPluginException {
+        _recordingApiAvailable = false;
+      } finally {
+        _isNativeRecording = false;
+      }
+      return;
+    }
+
     await _mediaRecorder?.stop();
     _mediaRecorder = null;
+  }
+
+  Future<void> _startNativeMacosRecording(String path) async {
+    try {
+      await _nativeRecordingChannel.invokeMethod<void>(
+        'startRecording',
+        {
+          'path': path,
+          'includeAudio': _settings.enableMicrophone,
+        },
+      );
+      _isNativeRecording = true;
+    } on MissingPluginException {
+      _recordingApiAvailable = false;
+      throw StateError('Local recording is unavailable on this platform.');
+    } on PlatformException catch (error) {
+      throw StateError(error.message ?? 'Unable to start macOS recording.');
+    }
+  }
+
+  void _applyRemoteAudioPlaybackSetting() {
+    if (role != PeerRole.monitor || remoteRenderer.srcObject == null) return;
+
+    try {
+      remoteRenderer.muted = !_settings.enableMonitorAudio;
+    } catch (error, stackTrace) {
+      AppLogger.error(
+          'Failed to apply monitor audio playback setting', error, stackTrace);
+    }
   }
 
   void _handlePeerConnectionState(RTCPeerConnectionState state) {
@@ -338,6 +458,80 @@ class RtcManager {
     );
   }
 
+  void _configureActivityDetection() {
+    _activityPollTimer?.cancel();
+    _lastVideoBytesSent = null;
+
+    if (role != PeerRole.camera || !_settings.activityDetectionEnabled) {
+      if (_activityDetected) {
+        _activityDetected = false;
+        onActivityChanged?.call(false);
+      }
+      return;
+    }
+
+    _activityPollTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => unawaited(_pollVideoActivity()),
+    );
+  }
+
+  Future<void> _pollVideoActivity() async {
+    if (_activityProbeInFlight ||
+        role != PeerRole.camera ||
+        !_settings.activityDetectionEnabled) {
+      return;
+    }
+
+    final peerConnection = _peerConnection;
+    if (peerConnection == null) return;
+
+    _activityProbeInFlight = true;
+    try {
+      final senders = await peerConnection.getSenders();
+      RTCRtpSender? videoSender;
+      for (final sender in senders) {
+        if (sender.track?.kind == 'video') {
+          videoSender = sender;
+          break;
+        }
+      }
+
+      if (videoSender == null) return;
+
+      final reports = await videoSender.getStats();
+      for (final report in reports) {
+        if (report.type != 'outbound-rtp') continue;
+
+        final mediaType = report.values['mediaType'] ?? report.values['kind'];
+        if (mediaType != 'video') continue;
+
+        final bytesSent = int.tryParse('${report.values['bytesSent']}');
+        if (bytesSent == null) continue;
+
+        final previousBytes = _lastVideoBytesSent;
+        _lastVideoBytesSent = bytesSent;
+        if (previousBytes == null) return;
+
+        final deltaBytes = bytesSent - previousBytes;
+        final bitrateKbps = (deltaBytes * 8) / 2000;
+        final thresholdKbps = _settings.maxVideoBitrateKbps <= 450 ? 90 : 140;
+        final nextActivityDetected = bitrateKbps >= thresholdKbps;
+
+        if (nextActivityDetected != _activityDetected) {
+          _activityDetected = nextActivityDetected;
+          onActivityChanged?.call(_activityDetected);
+        }
+        return;
+      }
+    } catch (error, stackTrace) {
+      AppLogger.error(
+          'Failed to poll activity detection stats', error, stackTrace);
+    } finally {
+      _activityProbeInFlight = false;
+    }
+  }
+
   Future<void> _activateTurnFallback({
     required String reason,
     bool renegotiate = true,
@@ -355,7 +549,10 @@ class RtcManager {
 
     try {
       await _peerConnection?.setConfiguration(
-        config.peerConnectionConfiguration(includeTurn: true),
+        config.peerConnectionConfiguration(
+          includeTurn: true,
+          useMultipleStunServers: _settings.useMultipleStunServers,
+        ),
       );
       await _peerConnection?.restartIce();
       if (renegotiate) {
@@ -368,6 +565,25 @@ class RtcManager {
     } finally {
       _isIceRestartInFlight = false;
       _emitDiagnostics();
+    }
+  }
+
+  Future<void> _applyIceServerSettings() async {
+    final peerConnection = _peerConnection;
+    if (peerConnection == null) return;
+
+    try {
+      await peerConnection.setConfiguration(
+        config.peerConnectionConfiguration(
+          includeTurn: _isTurnFallbackActive,
+          useMultipleStunServers: _settings.useMultipleStunServers,
+        ),
+      );
+      await peerConnection.restartIce();
+      final offer = await createOffer(iceRestart: true);
+      onSignal?.call(offer);
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to apply ICE server settings', error, stackTrace);
     }
   }
 
@@ -423,15 +639,10 @@ class RtcManager {
     if (peerConnection == null) return;
 
     final previousStream = _localStream;
-    final updatedStream = await navigator.mediaDevices.getUserMedia({
-      'audio': _settings.enableMicrophone,
-      'video': {
-        'facingMode': 'environment',
-        'width': _settings.videoProfile.width,
-        'height': _settings.videoProfile.height,
-        'frameRate': _settings.videoProfile.frameRate,
-      },
-    });
+    final updatedStream = await _getUserMediaWithFallback(
+      _buildLocalMediaConstraints(includeAudio: _settings.enableMicrophone),
+      allowAudioFallback: _settings.enableMicrophone,
+    );
 
     final senders = await peerConnection.getSenders();
     RTCRtpSender? videoSender;
@@ -479,16 +690,126 @@ class RtcManager {
     }
     await _applyVideoBitrateSettings();
 
-    for (final track
-        in previousStream?.getTracks() ?? const <MediaStreamTrack>[]) {
-      await track.stop();
-    }
-    await previousStream?.dispose();
+    await _disposeStream(previousStream);
 
     if (requiresRenegotiation) {
       final offer = await createOffer();
       onSignal?.call(offer);
     }
+  }
+
+  Map<String, Object> _buildLocalMediaConstraints(
+      {required bool includeAudio}) {
+    return {
+      'audio': includeAudio,
+      'video': {
+        'facingMode': 'environment',
+        'width': _settings.videoProfile.width,
+        'height': _settings.videoProfile.height,
+        'frameRate': _settings.videoProfile.frameRate,
+      },
+    };
+  }
+
+  Future<MediaStream> _getUserMediaWithFallback(
+    Map<String, Object> mediaConstraints, {
+    required bool allowAudioFallback,
+  }) async {
+    try {
+      _captureWarning = null;
+      if (allowAudioFallback) {
+        await _requestMicrophoneAccessIfNeeded();
+      }
+      return await navigator.mediaDevices.getUserMedia(mediaConstraints);
+    } catch (error, stackTrace) {
+      final canRetryWithoutAudio =
+          allowAudioFallback && _isPermissionStyleCaptureError(error);
+      if (!canRetryWithoutAudio) rethrow;
+
+      AppLogger.error(
+        'Audio capture failed, retrying camera startup without microphone',
+        error,
+        stackTrace,
+      );
+
+      _captureWarning =
+          'Microphone access was denied. Live started without audio.';
+      final fallbackConstraints = _buildLocalMediaConstraints(
+        includeAudio: false,
+      );
+      debugPrint(
+        'RTC: retrying getUserMedia without audio: $fallbackConstraints',
+      );
+      return navigator.mediaDevices.getUserMedia(fallbackConstraints);
+    }
+  }
+
+  Future<void> _requestMicrophoneAccessIfNeeded() async {
+    if (defaultTargetPlatform != TargetPlatform.macOS) {
+      return;
+    }
+
+    try {
+      final granted = await _permissionsChannel.invokeMethod<bool>(
+        'requestMicrophoneAccess',
+      );
+      if (granted == false) {
+        throw StateError('Microphone access denied.');
+      }
+    } on MissingPluginException {
+      // Keep the existing getUserMedia path as a fallback if the channel is
+      // unavailable during development reloads.
+    } on PlatformException catch (error) {
+      throw StateError(
+        error.message ?? 'Unable to request microphone access.',
+      );
+    }
+  }
+
+  Future<bool> openMicrophoneSettings() async {
+    if (defaultTargetPlatform != TargetPlatform.macOS) {
+      return false;
+    }
+
+    try {
+      return await _permissionsChannel.invokeMethod<bool>(
+            'openMicrophoneSettings',
+          ) ??
+          false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  bool _isPermissionStyleCaptureError(Object error) {
+    if (error is PlatformException) {
+      final code = error.code.toLowerCase();
+      final message = (error.message ?? '').toLowerCase();
+      return code.contains('notallowed') ||
+          code.contains('permission') ||
+          message.contains('notallowed') ||
+          message.contains('permission');
+    }
+
+    final errorText = error.toString().toLowerCase();
+    return errorText.contains('notallowed') ||
+        errorText.contains('permission') ||
+        errorText.contains('denied');
+  }
+
+  Future<void> _releaseLocalStream() async {
+    localRenderer.srcObject = null;
+    await _disposeStream(_localStream);
+    _localStream = null;
+  }
+
+  Future<void> _disposeStream(MediaStream? stream) async {
+    for (final track in stream?.getTracks() ?? const <MediaStreamTrack>[]) {
+      await track.stop();
+    }
+    await stream?.dispose();
   }
 
   RTCPriorityType _encodingPriorityFor(ViewerPriorityMode mode) {

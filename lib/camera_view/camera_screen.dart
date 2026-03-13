@@ -1,8 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../config/app_config.dart';
 import '../config/stream_settings.dart';
@@ -10,6 +10,7 @@ import '../signaling/signaling_client.dart';
 import '../signaling/signaling_message.dart';
 import '../ui/azure_theme.dart';
 import '../utils/app_logger.dart';
+import '../utils/recording_storage.dart';
 import '../utils/room_security.dart';
 import '../webrtc/rtc_manager.dart';
 import '../widgets/app_shell_ui.dart';
@@ -24,15 +25,18 @@ class CameraScreen extends StatefulWidget {
 
 class _CameraScreenState extends State<CameraScreen> {
   final _roomController = TextEditingController(text: 'first-channel');
+  static const _autoDimDelay = Duration(minutes: 3);
 
   late final AppConfig _config;
   SignalingClient? _signaling;
   RtcManager? _rtc;
+  Timer? _autoDimTimer;
   StreamSettings _settings = StreamSettings.cameraDefaults;
   PairingMethod _pairingMethod = PairingMethod.roomId;
   String _status = 'Standby';
   String _connectionReport = 'P2P first · waiting to start';
   String? _recordingPath;
+  bool _isAutoDimmed = false;
 
   String get _resolvedRoomId {
     final value = _roomController.text.trim();
@@ -54,6 +58,7 @@ class _CameraScreenState extends State<CameraScreen> {
   void initState() {
     super.initState();
     _config = AppConfig.fromEnvironment();
+    _syncAutoDimTimer();
   }
 
   Future<void> _startStreaming() async {
@@ -113,26 +118,40 @@ class _CameraScreenState extends State<CameraScreen> {
       }
     };
 
-    await rtc.initialize();
-    if (!mounted) return;
-    setState(() {
-      _settings = effectiveSettings;
-      _rtc = rtc;
-      _status = 'Camera preview ready';
-      _connectionReport = rtc.connectionSummary;
-    });
+    try {
+      await rtc.initialize();
+      if (!mounted) return;
+      setState(() {
+        _settings = rtc.settings;
+        _rtc = rtc;
+        _status = 'Camera preview ready';
+        _connectionReport = rtc.connectionSummary;
+      });
+      _showCaptureWarning(rtc);
 
-    await signaling.connect();
+      await signaling.connect();
 
-    final offer = await rtc.createOffer();
-    signaling.send(offer);
+      final offer = await rtc.createOffer();
+      signaling.send(offer);
 
-    if (!mounted) return;
-    setState(() {
-      _signaling = signaling;
-      _status = 'Waiting for viewer';
-      _connectionReport = rtc.connectionSummary;
-    });
+      if (!mounted) return;
+      setState(() {
+        _signaling = signaling;
+        _status = 'Waiting for viewer';
+        _connectionReport = rtc.connectionSummary;
+      });
+    } catch (error, stackTrace) {
+      AppLogger.error('Unable to start camera streaming', error, stackTrace);
+      await signaling.disconnect();
+      await rtc.dispose();
+      if (!mounted) return;
+      setState(() {
+        _signaling = null;
+        _rtc = null;
+        _status = _cameraStartErrorLabel(error);
+        _connectionReport = 'P2P first · idle';
+      });
+    }
   }
 
   Future<void> _stopStreaming() async {
@@ -161,44 +180,108 @@ class _CameraScreenState extends State<CameraScreen> {
       title: 'Camera settings',
       initialSettings: _settings,
       turnAvailable: _config.hasTurnServer,
+      mode: SettingsSheetMode.camera,
     );
 
     if (updatedSettings == null || !mounted) return;
 
     setState(() => _settings = updatedSettings);
-    await _rtc?.updateSettings(_responsiveSettings(context));
+    _syncAutoDimTimer();
+    final rtc = _rtc;
+    if (rtc != null) {
+      await rtc.updateSettings(_responsiveSettings(context));
+      if (!mounted) return;
+      setState(() => _settings = rtc.settings);
+      _showCaptureWarning(rtc);
+    }
+  }
+
+  Future<void> _openQrCodeModal(String payload) {
+    return showPairingQrCodeModal(
+      context: context,
+      payload: payload,
+      title: 'QR pairing',
+      subtitle: 'Scan this code on the monitor to pair instantly.',
+    );
+  }
+
+  Future<void> _openFullscreenPreview(StreamSettings effectiveSettings) {
+    final rtc = _rtc;
+    if (rtc == null) return Future.value();
+
+    return showFullscreenPreview(
+      context: context,
+      renderer: rtc.localRenderer,
+      objectFit: effectiveSettings.rtcVideoFit,
+      mirror: false,
+      lowLightBoost: effectiveSettings.lowLightBoost,
+      profileLabel: effectiveSettings.videoDisplayLabel,
+    );
   }
 
   Future<void> _toggleRecording() async {
     final rtc = _rtc;
     if (rtc == null) return;
 
-    if (rtc.isRecording) {
-      await rtc.stopRecording();
+    try {
+      if (rtc.isRecording) {
+        await rtc.stopRecording();
+        if (!mounted) return;
+        setState(() => _status = 'Recording saved');
+        return;
+      }
+
+      final recordingsDirectory = await resolveRecordingDirectory(_settings);
+
+      if (!await recordingsDirectory.exists()) {
+        await recordingsDirectory.create(recursive: true);
+      }
+
+      final filePath =
+          '${recordingsDirectory.path}${Platform.pathSeparator}camera_${DateTime.now().millisecondsSinceEpoch}.mp4';
+
+      await rtc.startRecording(filePath);
+
       if (!mounted) return;
-      setState(() => _status = 'Recording saved');
+      setState(() {
+        _recordingPath = filePath;
+        _status = 'Recording locally';
+      });
+    } on StateError catch (error, stackTrace) {
+      AppLogger.error('Unable to start recording', error, stackTrace);
+      if (!mounted) return;
+      setState(() => _status = error.message);
+    } catch (error, stackTrace) {
+      AppLogger.error('Unable to start recording', error, stackTrace);
+      if (!mounted) return;
+      setState(() => _status = 'Recording unavailable');
+    }
+  }
+
+  void _registerActivity() {
+    if (!_settings.automaticPowerSavingMode) return;
+
+    _autoDimTimer?.cancel();
+    if (_isAutoDimmed) {
+      setState(() => _isAutoDimmed = false);
+    }
+
+    _autoDimTimer = Timer(_autoDimDelay, () {
+      if (!mounted || !_settings.automaticPowerSavingMode) return;
+      setState(() => _isAutoDimmed = true);
+    });
+  }
+
+  void _syncAutoDimTimer() {
+    if (!_settings.automaticPowerSavingMode) {
+      _autoDimTimer?.cancel();
+      if (_isAutoDimmed) {
+        setState(() => _isAutoDimmed = false);
+      }
       return;
     }
 
-    final baseDirectory = await getApplicationSupportDirectory();
-    final recordingsDirectory = Directory(
-      '${baseDirectory.path}/AetherLinkRecordings',
-    );
-
-    if (!await recordingsDirectory.exists()) {
-      await recordingsDirectory.create(recursive: true);
-    }
-
-    final filePath =
-        '${recordingsDirectory.path}/camera_${DateTime.now().millisecondsSinceEpoch}.mp4';
-
-    await rtc.startRecording(filePath);
-
-    if (!mounted) return;
-    setState(() {
-      _recordingPath = filePath;
-      _status = 'Recording locally';
-    });
+    _registerActivity();
   }
 
   String _peerStateLabel(RTCPeerConnectionState state) {
@@ -216,6 +299,37 @@ class _CameraScreenState extends State<CameraScreen> {
       case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
         return 'Session closed';
     }
+  }
+
+  String _cameraStartErrorLabel(Object error) {
+    final message = error.toString();
+    if (message.contains('NotAllowedError') ||
+        message.toLowerCase().contains('permission')) {
+      return 'Camera access denied';
+    }
+    return 'Unable to start live view';
+  }
+
+  void _showCaptureWarning(RtcManager rtc) {
+    final warning = rtc.captureWarning;
+    if (!mounted || warning == null || warning.isEmpty) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(warning),
+          action: Platform.isMacOS
+              ? SnackBarAction(
+                  label: 'Open settings',
+                  onPressed: () {
+                    rtc.openMicrophoneSettings();
+                  },
+                )
+              : null,
+        ),
+      );
   }
 
   MetricTone _statusTone() {
@@ -242,37 +356,9 @@ class _CameraScreenState extends State<CameraScreen> {
     }
   }
 
-  List<MetricBadge> _connectionHighlights(StreamSettings effectiveSettings) {
-    return [
-      MetricBadge(
-        label: effectiveSettings.preferDirectP2P
-            ? 'Direct route preferred'
-            : 'Auto route',
-        icon: Icons.hub_rounded,
-        tone: effectiveSettings.preferDirectP2P
-            ? MetricTone.good
-            : MetricTone.warning,
-      ),
-      MetricBadge(
-        label: '${_config.stunUrls.length} STUN servers',
-        icon: Icons.public_rounded,
-        tone:
-            _config.stunUrls.length > 1 ? MetricTone.good : MetricTone.warning,
-      ),
-      MetricBadge(
-        label: _config.hasTurnServer && effectiveSettings.enableTurnFallback
-            ? 'TURN on standby'
-            : 'TURN off',
-        icon: Icons.compare_arrows_rounded,
-        tone: _config.hasTurnServer && effectiveSettings.enableTurnFallback
-            ? MetricTone.good
-            : MetricTone.danger,
-      ),
-    ];
-  }
-
   @override
   void dispose() {
+    _autoDimTimer?.cancel();
     _roomController.dispose();
     _signaling?.disconnect();
     _rtc?.dispose();
@@ -284,6 +370,7 @@ class _CameraScreenState extends State<CameraScreen> {
     final isStreaming = _rtc != null;
     final canStart = !isStreaming;
     final canStop = isStreaming;
+    final canRecord = _rtc?.supportsLocalRecording ?? false;
     final effectiveSettings = _responsiveSettings(context);
     final pairingPayload = buildPairingPayload(
       roomId: _transmissionRoomId,
@@ -372,6 +459,15 @@ class _CameraScreenState extends State<CameraScreen> {
                                 ),
                               ),
                             ),
+                            Positioned(
+                              right: 12,
+                              bottom: 12,
+                              child: IconButton.filledTonal(
+                                onPressed: () =>
+                                    _openFullscreenPreview(effectiveSettings),
+                                icon: const Icon(Icons.fullscreen_rounded),
+                              ),
+                            ),
                           ],
                         ),
                 ),
@@ -381,79 +477,37 @@ class _CameraScreenState extends State<CameraScreen> {
         ),
       ),
       panels: [
-        if (_settings.showConnectionReport)
-          ConnectionReportPanel(
-            title: 'Connection report',
-            summary:
-                'Route status: $_connectionReport. Secure device pairing is active and relay remains a last-resort path.',
-            highlights: _connectionHighlights(effectiveSettings),
-            statusTone: _statusTone(),
-          ),
         SurfacePanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               PairingMethodTabs(
                 activeMethod: _pairingMethod,
-                onChanged: (method) => setState(() => _pairingMethod = method),
+                onChanged: (method) {
+                  if (method == PairingMethod.qrCode) {
+                    _openQrCodeModal(pairingPayload);
+                    return;
+                  }
+                  setState(() => _pairingMethod = method);
+                },
               ),
               const SizedBox(height: 16),
-              if (_pairingMethod == PairingMethod.roomId)
-                TextField(
-                  controller: _roomController,
-                  decoration: const InputDecoration(labelText: 'Room ID'),
-                  onChanged: (_) => setState(() {}),
-                )
-              else
-                PairingQrCodeCard(
-                  payload: pairingPayload,
-                  title: 'QR pairing',
-                  subtitle: 'Scan this code on the monitor to pair instantly.',
-                ),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  MetricBadge(
-                    label: effectiveSettings.powerSaveMode
-                        ? 'Power save on'
-                        : 'Power save off',
-                    icon: effectiveSettings.powerSaveMode
-                        ? Icons.battery_saver_rounded
-                        : Icons.battery_full_rounded,
-                  ),
-                  MetricBadge(
-                    label: 'Bitrate ${effectiveSettings.bitrateLabel}',
-                    icon: Icons.speed_rounded,
-                  ),
-                  MetricBadge(
-                    label: 'Quality ${effectiveSettings.qualityPresetLabel}',
-                    icon: Icons.high_quality_rounded,
-                  ),
-                  MetricBadge(
-                    label: effectiveSettings.enableMicrophone
-                        ? 'Voice enabled'
-                        : 'Voice disabled',
-                    icon: effectiveSettings.enableMicrophone
-                        ? Icons.mic_rounded
-                        : Icons.mic_off_rounded,
-                  ),
-                  MetricBadge(
-                    label: '${_config.stunUrls.length} STUN servers',
-                    icon: Icons.public_rounded,
-                  ),
-                  MetricBadge(
-                    label: _config.hasTurnServer && _settings.enableTurnFallback
-                        ? 'TURN enabled'
-                        : 'TURN disabled',
-                    icon: Icons.compare_arrows_rounded,
-                  ),
-                ],
+              TextField(
+                controller: _roomController,
+                decoration: const InputDecoration(labelText: 'Room ID'),
+                onChanged: (_) => setState(() {}),
               ),
             ],
           ),
         ),
+        if (_settings.showConnectionReport)
+          ConnectionReportPanel(
+            title: 'Connection report',
+            summary:
+                'Route status: $_connectionReport. Secure device pairing is active and relay remains a last-resort path.',
+            highlights: const [],
+            statusTone: _statusTone(),
+          ),
         if (_recordingPath != null)
           SurfacePanel(
             child: Text(
@@ -489,9 +543,11 @@ class _CameraScreenState extends State<CameraScreen> {
         ),
         if (isStreaming)
           OutlinedButton(
-            onPressed: _toggleRecording,
+            onPressed: canRecord ? _toggleRecording : null,
             child: Text(
-              (_rtc?.isRecording ?? false) ? 'Stop rec' : 'Start rec',
+              canRecord
+                  ? ((_rtc?.isRecording ?? false) ? 'Stop rec' : 'Start rec')
+                  : 'Recording unavailable',
             ),
           ),
       ],
