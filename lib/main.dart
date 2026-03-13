@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'package:video_player_media_kit/video_player_media_kit.dart';
 
 import 'camera_view/camera_screen.dart';
 import 'monitor_view/monitor_screen.dart';
@@ -8,6 +10,9 @@ import 'ui/azure_theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+    initVideoPlayerMediaKitIfNeeded();
+  }
   runApp(const TeleckApp());
 }
 
@@ -166,11 +171,15 @@ class _RoleCardState extends State<_RoleCard> {
   }
 
   Future<void> _initializeVideo() async {
+    if (!_supportsAssetVideoPlayback) {
+      return;
+    }
+
     try {
       final controller = VideoPlayerController.asset(widget.assetPath);
+      await controller.initialize();
       await controller.setLooping(true);
       await controller.setVolume(0);
-      await controller.initialize();
       await controller.play();
 
       if (!mounted) {
@@ -180,9 +189,29 @@ class _RoleCardState extends State<_RoleCard> {
 
       setState(() => _controller = controller);
     } on UnimplementedError {
-      if (mounted) setState(() {});
-    } catch (_) {
-      if (mounted) setState(() {});
+      debugPrint(
+        'Video playback is not implemented on ${defaultTargetPlatform.name}. '
+        'Using gradient fallback for ${widget.assetPath}.',
+      );
+    } catch (error) {
+      debugPrint(
+        'Failed to initialize video background for ${widget.assetPath}: $error',
+      );
+    }
+  }
+
+  bool get _supportsAssetVideoPlayback {
+    if (kIsWeb) return true;
+
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+        return true;
+      case TargetPlatform.linux:
+      case TargetPlatform.fuchsia:
+        return false;
     }
   }
 
@@ -195,6 +224,7 @@ class _RoleCardState extends State<_RoleCard> {
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
+    final isVideoReady = controller != null && controller.value.isInitialized;
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -212,13 +242,19 @@ class _RoleCardState extends State<_RoleCard> {
                 ),
               ),
             ),
-            if (controller != null && controller.value.isInitialized)
-              FittedBox(
-                fit: BoxFit.cover,
-                child: SizedBox(
-                  width: controller.value.size.width,
-                  height: controller.value.size.height,
-                  child: VideoPlayer(controller),
+            if (isVideoReady)
+              Positioned.fill(
+                child: ClipRect(
+                  child: FittedBox(
+                    fit: BoxFit.cover,
+                    child: SizedBox(
+                      width: controller.value.size.width,
+                      height: controller.value.size.height,
+                      child: ExcludeSemantics(
+                        child: VideoPlayer(controller),
+                      ),
+                    ),
+                  ),
                 ),
               )
             else

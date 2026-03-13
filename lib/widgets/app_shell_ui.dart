@@ -561,10 +561,16 @@ Future<void> showFullscreenPreview({
             child: Stack(
               fit: StackFit.expand,
               children: [
-                RTCVideoView(
-                  renderer,
-                  mirror: mirror,
-                  objectFit: objectFit,
+                Semantics(
+                  label: 'Fullscreen video preview',
+                  image: true,
+                  child: ExcludeSemantics(
+                    child: RTCVideoView(
+                      renderer,
+                      mirror: mirror,
+                      objectFit: objectFit,
+                    ),
+                  ),
                 ),
                 if (lowLightBoost)
                   Container(

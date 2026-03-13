@@ -26,6 +26,7 @@ class CameraScreen extends StatefulWidget {
 
 class _CameraScreenState extends State<CameraScreen> {
   final _roomController = TextEditingController(text: 'first-channel');
+  final _pairingLinkController = TextEditingController();
   static const _autoDimDelay = Duration(minutes: 3);
 
   late final AppConfig _config;
@@ -42,12 +43,33 @@ class _CameraScreenState extends State<CameraScreen> {
   bool _isSendingOffer = false;
   bool _awaitingAnswer = false;
 
+  PairingPayloadData? get _pairingPayloadData {
+    final value = _pairingLinkController.text.trim();
+    if (value.isEmpty) return null;
+    return parsePairingPayload(value);
+  }
+
+  String? get _pairingLinkErrorText {
+    final value = _pairingLinkController.text.trim();
+    if (value.isEmpty) return null;
+    return _pairingPayloadData == null
+        ? 'Enter a valid Teleck pairing link'
+        : null;
+  }
+
   String get _resolvedRoomId {
+    final pairedRoomId = _pairingPayloadData?.roomId;
+    if (pairedRoomId != null && pairedRoomId.isNotEmpty) {
+      return pairedRoomId;
+    }
     final value = _roomController.text.trim();
     return value.isEmpty ? 'first-channel' : value;
   }
 
   String get _transmissionRoomId => secureRoomToken(_resolvedRoomId);
+
+  String get _resolvedSignalingUrl =>
+      _pairingPayloadData?.signalingUrl ?? _config.signalingUrl;
 
   StreamSettings _responsiveSettings(BuildContext context) {
     final size = MediaQuery.of(context).size;
@@ -69,7 +91,7 @@ class _CameraScreenState extends State<CameraScreen> {
     if (_signaling != null || _rtc != null) return;
 
     final effectiveSettings = _responsiveSettings(context);
-    final signaling = SignalingClient(serverUrl: _config.signalingUrl);
+    final signaling = SignalingClient(serverUrl: _resolvedSignalingUrl);
     final rtc = RtcManager(
       role: PeerRole.camera,
       config: _config,
@@ -447,6 +469,7 @@ class _CameraScreenState extends State<CameraScreen> {
     _autoDimTimer?.cancel();
     _resetNegotiationState();
     _roomController.dispose();
+    _pairingLinkController.dispose();
     _signaling?.disconnect();
     _rtc?.dispose();
     super.dispose();
@@ -455,7 +478,7 @@ class _CameraScreenState extends State<CameraScreen> {
   @override
   Widget build(BuildContext context) {
     final isStreaming = _rtc != null;
-    final canStart = !isStreaming;
+    final canStart = !isStreaming && _pairingLinkErrorText == null;
     final canStop = isStreaming;
     final canRecord = _rtc?.supportsLocalRecording ?? false;
     final effectiveSettings = _responsiveSettings(context);
@@ -512,10 +535,16 @@ class _CameraScreenState extends State<CameraScreen> {
                       : Stack(
                           fit: StackFit.expand,
                           children: [
-                            RTCVideoView(
-                              _rtc!.localRenderer,
-                              mirror: false,
-                              objectFit: effectiveSettings.rtcVideoFit,
+                            Semantics(
+                              label: 'Local camera preview',
+                              image: true,
+                              child: ExcludeSemantics(
+                                child: RTCVideoView(
+                                  _rtc!.localRenderer,
+                                  mirror: false,
+                                  objectFit: effectiveSettings.rtcVideoFit,
+                                ),
+                              ),
                             ),
                             if (effectiveSettings.lowLightBoost)
                               Container(
@@ -582,6 +611,15 @@ class _CameraScreenState extends State<CameraScreen> {
               TextField(
                 controller: _roomController,
                 decoration: const InputDecoration(labelText: 'Room ID'),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _pairingLinkController,
+                decoration: InputDecoration(
+                  labelText: 'QR-Code Link',
+                  errorText: _pairingLinkErrorText,
+                ),
                 onChanged: (_) => setState(() {}),
               ),
             ],

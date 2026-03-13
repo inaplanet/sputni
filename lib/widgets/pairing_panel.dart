@@ -8,6 +8,18 @@ import '../ui/azure_theme.dart';
 
 enum PairingMethod { roomId, qrCode }
 
+class PairingPayloadData {
+  const PairingPayloadData({
+    required this.roomId,
+    this.signalingUrl,
+    this.role,
+  });
+
+  final String roomId;
+  final String? signalingUrl;
+  final String? role;
+}
+
 String buildPairingPayload({
   required String roomId,
   required String signalingUrl,
@@ -24,14 +36,27 @@ String buildPairingPayload({
   ).toString();
 }
 
-String? parseRoomIdFromPairingPayload(String rawValue) {
+PairingPayloadData? parsePairingPayload(String rawValue) {
   final uri = Uri.tryParse(rawValue);
   if (uri == null) return null;
   if (uri.scheme != 'teleck' || uri.host != 'pair') return null;
 
   final roomId = uri.queryParameters['room'];
   if (roomId == null || roomId.trim().isEmpty) return null;
-  return roomId.trim();
+  final signalingUrl = uri.queryParameters['signal']?.trim();
+  final role = uri.queryParameters['role']?.trim();
+
+  return PairingPayloadData(
+    roomId: roomId.trim(),
+    signalingUrl: signalingUrl == null || signalingUrl.isEmpty
+        ? null
+        : signalingUrl,
+    role: role == null || role.isEmpty ? null : role,
+  );
+}
+
+String? parseRoomIdFromPairingPayload(String rawValue) {
+  return parsePairingPayload(rawValue)?.roomId;
 }
 
 class PairingMethodTabs extends StatelessWidget {
@@ -155,18 +180,24 @@ class _PairingQrCodeCardState extends State<PairingQrCodeCard> {
                   AspectRatio(
                     aspectRatio: 1 / 2,
                     child: Center(
-                      child: QrImageView(
-                        data: widget.payload,
-                        version: QrVersions.auto,
-                        backgroundColor: Colors.white,
-                        size: 220,
-                        eyeStyle: const QrEyeStyle(
-                          eyeShape: QrEyeShape.square,
-                          color: AzureTheme.ink,
-                        ),
-                        dataModuleStyle: const QrDataModuleStyle(
-                          dataModuleShape: QrDataModuleShape.square,
-                          color: AzureTheme.ink,
+                      child: Semantics(
+                        label: 'Pairing QR code',
+                        image: true,
+                        child: ExcludeSemantics(
+                          child: QrImageView(
+                            data: widget.payload,
+                            version: QrVersions.auto,
+                            backgroundColor: Colors.white,
+                            size: 220,
+                            eyeStyle: const QrEyeStyle(
+                              eyeShape: QrEyeShape.square,
+                              color: AzureTheme.ink,
+                            ),
+                            dataModuleStyle: const QrDataModuleStyle(
+                              dataModuleShape: QrDataModuleShape.square,
+                              color: AzureTheme.ink,
+                            ),
+                          ),
                         ),
                       ),
                     ),

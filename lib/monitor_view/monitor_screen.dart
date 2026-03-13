@@ -26,6 +26,7 @@ class MonitorScreen extends StatefulWidget {
 
 class _MonitorScreenState extends State<MonitorScreen> {
   final _roomController = TextEditingController(text: 'first-channel');
+  final _pairingLinkController = TextEditingController();
 
   late final AppConfig _config;
   SignalingClient? _signaling;
@@ -38,12 +39,33 @@ class _MonitorScreenState extends State<MonitorScreen> {
   bool _didAutoOpenFullscreen = false;
   Timer? _monitorPresenceTimer;
 
+  PairingPayloadData? get _pairingPayloadData {
+    final value = _pairingLinkController.text.trim();
+    if (value.isEmpty) return null;
+    return parsePairingPayload(value);
+  }
+
+  String? get _pairingLinkErrorText {
+    final value = _pairingLinkController.text.trim();
+    if (value.isEmpty) return null;
+    return _pairingPayloadData == null
+        ? 'Enter a valid Teleck pairing link'
+        : null;
+  }
+
   String get _resolvedRoomId {
+    final pairedRoomId = _pairingPayloadData?.roomId;
+    if (pairedRoomId != null && pairedRoomId.isNotEmpty) {
+      return pairedRoomId;
+    }
     final value = _roomController.text.trim();
     return value.isEmpty ? 'first-channel' : value;
   }
 
   String get _transmissionRoomId => secureRoomToken(_resolvedRoomId);
+
+  String get _resolvedSignalingUrl =>
+      _pairingPayloadData?.signalingUrl ?? _config.signalingUrl;
 
   StreamSettings _responsiveSettings(BuildContext context) {
     final size = MediaQuery.of(context).size;
@@ -64,7 +86,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
     if (_signaling != null || _rtc != null) return;
 
     final effectiveSettings = _responsiveSettings(context);
-    final signaling = SignalingClient(serverUrl: _config.signalingUrl);
+    final signaling = SignalingClient(serverUrl: _resolvedSignalingUrl);
     final rtc = RtcManager(
       role: PeerRole.monitor,
       config: _config,
@@ -335,6 +357,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
   void dispose() {
     _stopMonitorPresence();
     _roomController.dispose();
+    _pairingLinkController.dispose();
     _signaling?.disconnect();
     _rtc?.dispose();
     super.dispose();
@@ -343,7 +366,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
   @override
   Widget build(BuildContext context) {
     final isConnected = _rtc != null;
-    final canConnect = !isConnected;
+    final canConnect = !isConnected && _pairingLinkErrorText == null;
     final canDisconnect = isConnected;
     final canRecord = _rtc?.supportsRecording ?? false;
     final effectiveSettings = _responsiveSettings(context);
@@ -398,9 +421,15 @@ class _MonitorScreenState extends State<MonitorScreen> {
                       : Stack(
                           fit: StackFit.expand,
                           children: [
-                            RTCVideoView(
-                              _rtc!.remoteRenderer,
-                              objectFit: effectiveSettings.rtcVideoFit,
+                            Semantics(
+                              label: 'Remote video preview',
+                              image: true,
+                              child: ExcludeSemantics(
+                                child: RTCVideoView(
+                                  _rtc!.remoteRenderer,
+                                  objectFit: effectiveSettings.rtcVideoFit,
+                                ),
+                              ),
                             ),
                             if (effectiveSettings.lowLightBoost)
                               Container(
@@ -467,6 +496,15 @@ class _MonitorScreenState extends State<MonitorScreen> {
               TextField(
                 controller: _roomController,
                 decoration: const InputDecoration(labelText: 'Room ID'),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _pairingLinkController,
+                decoration: InputDecoration(
+                  labelText: 'QR-Code Link',
+                  errorText: _pairingLinkErrorText,
+                ),
                 onChanged: (_) => setState(() {}),
               ),
             ],
