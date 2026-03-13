@@ -42,6 +42,7 @@ class _CameraScreenState extends State<CameraScreen> {
   Timer? _offerRetryTimer;
   bool _isSendingOffer = false;
   bool _awaitingAnswer = false;
+  String? _qrPairingRoomId;
 
   PairingPayloadData? get _pairingPayloadData {
     final value = _pairingLinkController.text.trim();
@@ -57,7 +58,17 @@ class _CameraScreenState extends State<CameraScreen> {
         : null;
   }
 
+  bool get _hasValidPairingLink => _pairingPayloadData != null;
+
+  bool get _usesQrPairing => _pairingMethod == PairingMethod.qrCode;
+
+  bool get _isRoomIdManagedByPairing => _usesQrPairing || _hasValidPairingLink;
+
   String get _resolvedRoomId {
+    final qrRoomId = _qrPairingRoomId;
+    if (_usesQrPairing && qrRoomId != null && qrRoomId.isNotEmpty) {
+      return qrRoomId;
+    }
     final pairedRoomId = _pairingPayloadData?.roomId;
     if (pairedRoomId != null && pairedRoomId.isNotEmpty) {
       return pairedRoomId;
@@ -70,6 +81,30 @@ class _CameraScreenState extends State<CameraScreen> {
 
   String get _resolvedSignalingUrl =>
       _pairingPayloadData?.signalingUrl ?? _config.signalingUrl;
+
+  void _ensureQrPairingRoomId() {
+    _qrPairingRoomId ??= generateSecureRoomToken();
+  }
+
+  void _handlePairingMethodChange(PairingMethod method) {
+    setState(() {
+      _pairingMethod = method;
+      if (method == PairingMethod.qrCode) {
+        _ensureQrPairingRoomId();
+        _pairingLinkController.clear();
+      }
+    });
+
+    if (method == PairingMethod.qrCode) {
+      _openQrCodeModal(
+        buildPairingPayload(
+          roomId: _transmissionRoomId,
+          signalingUrl: _resolvedSignalingUrl,
+          role: 'camera',
+        ),
+      );
+    }
+  }
 
   StreamSettings _responsiveSettings(BuildContext context) {
     final size = MediaQuery.of(context).size;
@@ -482,9 +517,12 @@ class _CameraScreenState extends State<CameraScreen> {
     final canStop = isStreaming;
     final canRecord = _rtc?.supportsLocalRecording ?? false;
     final effectiveSettings = _responsiveSettings(context);
+    if (_usesQrPairing) {
+      _ensureQrPairingRoomId();
+    }
     final pairingPayload = buildPairingPayload(
       roomId: _transmissionRoomId,
-      signalingUrl: _config.signalingUrl,
+      signalingUrl: _resolvedSignalingUrl,
       role: 'camera',
     );
 
@@ -599,18 +637,21 @@ class _CameraScreenState extends State<CameraScreen> {
             children: [
               PairingMethodTabs(
                 activeMethod: _pairingMethod,
-                onChanged: (method) {
-                  if (method == PairingMethod.qrCode) {
-                    _openQrCodeModal(pairingPayload);
-                    return;
-                  }
-                  setState(() => _pairingMethod = method);
-                },
+                onChanged: _handlePairingMethodChange,
               ),
               const SizedBox(height: 16),
               TextField(
                 controller: _roomController,
-                decoration: const InputDecoration(labelText: 'Room ID'),
+                enabled: !_isRoomIdManagedByPairing,
+                readOnly: _isRoomIdManagedByPairing,
+                decoration: InputDecoration(
+                  labelText: 'Room ID',
+                  helperText: _usesQrPairing
+                      ? 'Generated automatically for QR pairing'
+                      : (_hasValidPairingLink
+                          ? 'Resolved from the pairing link'
+                          : null),
+                ),
                 onChanged: (_) => setState(() {}),
               ),
               const SizedBox(height: 16),

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 
@@ -13,3 +14,12 @@ String secureRoomToken(String roomId) {
 }
 
 bool isSecureRoomToken(String value) => value.trim().startsWith('enc_');
+
+String generateSecureRoomToken() {
+  final random = Random.secure();
+  final entropy = StringBuffer('qr-${DateTime.now().microsecondsSinceEpoch}');
+  for (var index = 0; index < 4; index += 1) {
+    entropy.write('-${random.nextInt(1 << 32)}');
+  }
+  return secureRoomToken(entropy.toString());
+}
