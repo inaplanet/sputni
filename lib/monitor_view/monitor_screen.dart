@@ -284,7 +284,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
 
       if (!mounted) return;
       setState(() {
-        _recordingPath = filePath;
+        _recordingPath = rtc.activeRecordingPath ?? filePath;
         _status = 'Recording locally';
       });
     } on StateError catch (error, stackTrace) {
@@ -294,7 +294,7 @@ class _MonitorScreenState extends State<MonitorScreen> {
     } catch (error, stackTrace) {
       AppLogger.error('Unable to start monitor recording', error, stackTrace);
       if (!mounted) return;
-      setState(() => _status = 'Recording unavailable');
+      setState(() => _status = error.toString());
     }
   }
 
@@ -423,19 +423,26 @@ class _MonitorScreenState extends State<MonitorScreen> {
           children: [
             Row(
               children: [
-                StatusPill(
-                  label: _status,
-                  color: _statusColor(),
-                ),
-                const Spacer(),
-                if (_rtc?.isRecording ?? false)
-                  const Padding(
-                    padding: EdgeInsets.only(right: 8),
-                    child: StatusPill(
-                      label: 'REC',
-                      color: Color(0xFFD7263D),
-                    ),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: StatusPill(
+                          label: _status,
+                          color: _statusColor(),
+                        ),
+                      ),
+                      if (_rtc?.isRecording ?? false)
+                        const Padding(
+                          padding: EdgeInsets.only(left: 8),
+                          child: StatusPill(
+                            label: 'REC',
+                            color: Color(0xFFD7263D),
+                          ),
+                        ),
+                    ],
                   ),
+                ),
                 IconButton(
                   onPressed: _openSettings,
                   icon: const Icon(Icons.tune_rounded),

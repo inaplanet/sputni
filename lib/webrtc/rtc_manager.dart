@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -30,6 +31,7 @@ class RtcManager {
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   MediaRecorder? _mediaRecorder;
+  _WindowsFrameSequenceRecorder? _windowsFrameRecorder;
   Timer? _turnFallbackTimer;
   Timer? _activityPollTimer;
   final List<RTCIceCandidate> _pendingRemoteCandidates = [];
@@ -47,7 +49,8 @@ class RtcManager {
   bool _recordingApiAvailable = !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.android ||
           defaultTargetPlatform == TargetPlatform.iOS ||
-          defaultTargetPlatform == TargetPlatform.macOS);
+          defaultTargetPlatform == TargetPlatform.macOS ||
+          defaultTargetPlatform == TargetPlatform.windows);
 
   final localRenderer = RTCVideoRenderer();
   final remoteRenderer = RTCVideoRenderer();
@@ -58,12 +61,20 @@ class RtcManager {
   void Function(bool activityDetected)? onActivityChanged;
 
   bool get isTurnFallbackActive => _isTurnFallbackActive;
-  bool get isRecording => _mediaRecorder != null || _isNativeRecording;
+  bool get isRecording =>
+      _mediaRecorder != null ||
+      _isNativeRecording ||
+      _windowsFrameRecorder != null;
   StreamSettings get settings => _settings;
   String? get captureWarning => _captureWarning;
+  String? get activeRecordingPath => _windowsFrameRecorder?.outputPath;
   bool get supportsRecording {
     if (!_recordingApiAvailable) return false;
     if (role == PeerRole.camera) return true;
+
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      return true;
+    }
 
     return defaultTargetPlatform == TargetPlatform.android ||
         defaultTargetPlatform == TargetPlatform.iOS;
@@ -359,6 +370,17 @@ class RtcManager {
       return;
     }
 
+    if (role == PeerRole.camera &&
+        defaultTargetPlatform == TargetPlatform.windows) {
+      await _startNativeWindowsRecording(path);
+      return;
+    }
+
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      await _startWindowsFrameRecording(path, stream);
+      return;
+    }
+
     final videoTracks = stream.getVideoTracks();
     final audioTracks = stream.getAudioTracks();
     final audioChannel = switch (role) {
@@ -392,6 +414,15 @@ class RtcManager {
   }
 
   Future<void> stopRecording() async {
+    if (_windowsFrameRecorder != null) {
+      try {
+        await _windowsFrameRecorder!.stop();
+      } finally {
+        _windowsFrameRecorder = null;
+      }
+      return;
+    }
+
     if (_isNativeRecording) {
       try {
         await _nativeRecordingChannel.invokeMethod<String>('stopRecording');
@@ -405,6 +436,30 @@ class RtcManager {
 
     await _mediaRecorder?.stop();
     _mediaRecorder = null;
+  }
+
+  Future<void> _startWindowsFrameRecording(
+    String path,
+    MediaStream stream,
+  ) async {
+    final videoTracks = stream.getVideoTracks();
+    if (videoTracks.isEmpty) {
+      throw StateError(role == PeerRole.monitor
+          ? 'No remote video track available for recording.'
+          : 'No local video track available for recording.');
+    }
+
+    final recorder = _WindowsFrameSequenceRecorder(
+      videoTrack: videoTracks.first,
+      requestedPath: path,
+    );
+    try {
+      await recorder.start();
+      _windowsFrameRecorder = recorder;
+    } catch (_) {
+      await recorder.dispose();
+      rethrow;
+    }
   }
 
   Future<void> _startNativeMacosRecording(String path) async {
@@ -422,6 +477,24 @@ class RtcManager {
       throw StateError('Local recording is unavailable on this platform.');
     } on PlatformException catch (error) {
       throw StateError(error.message ?? 'Unable to start macOS recording.');
+    }
+  }
+
+  Future<void> _startNativeWindowsRecording(String path) async {
+    try {
+      await _nativeRecordingChannel.invokeMethod<void>(
+        'startRecording',
+        {
+          'path': path,
+          'includeAudio': _settings.enableMicrophone,
+        },
+      );
+      _isNativeRecording = true;
+    } on MissingPluginException {
+      _recordingApiAvailable = false;
+      throw StateError('Local recording is unavailable on this platform.');
+    } on PlatformException catch (error) {
+      throw StateError(error.message ?? 'Unable to start Windows recording.');
     }
   }
 
@@ -887,5 +960,115 @@ class RtcManager {
 
   void _emitDiagnostics() {
     onDiagnosticsChanged?.call(_buildConnectionSummary());
+  }
+}
+
+class _WindowsFrameSequenceRecorder {
+  _WindowsFrameSequenceRecorder({
+    required this.videoTrack,
+    required this.requestedPath,
+  });
+
+  final MediaStreamTrack videoTrack;
+  final String requestedPath;
+
+  Timer? _timer;
+  Future<void> _pendingCapture = Future<void>.value();
+  bool _captureInFlight = false;
+  int _frameIndex = 0;
+  late final Directory _outputDirectory;
+
+  String get outputPath => requestedPath;
+
+  Future<void> start() async {
+    final sanitizedPath = requestedPath.trim();
+    if (sanitizedPath.isEmpty) {
+      throw StateError('Recording path is invalid.');
+    }
+
+    final tempDirectory = Directory(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}teleck_recording_${DateTime.now().microsecondsSinceEpoch}',
+    );
+    _outputDirectory = tempDirectory;
+    await _outputDirectory.create(recursive: true);
+
+    await _captureOnce();
+    _timer = Timer.periodic(
+      const Duration(milliseconds: 200),
+      (_) {
+        _pendingCapture = _captureOnce();
+      },
+    );
+  }
+
+  Future<void> stop() async {
+    _timer?.cancel();
+    _timer = null;
+    await _pendingCapture;
+
+    if (_frameIndex == 0) {
+      throw StateError('No frames were captured for Windows recording.');
+    }
+
+    final tempOutputPath =
+        '${_outputDirectory.path}${Platform.pathSeparator}recording.mp4';
+
+    try {
+      await RtcManager._nativeRecordingChannel.invokeMethod<void>(
+        'composeFrameSequence',
+        {
+          'inputDirectory': _outputDirectory.path,
+          'outputPath': tempOutputPath,
+          'frameRate': 5,
+        },
+      );
+
+      final renderedFile = File(tempOutputPath);
+      if (!await renderedFile.exists()) {
+        throw StateError('Windows recording encoder did not produce an MP4 file.');
+      }
+
+      final targetFile = File(requestedPath);
+      if (await targetFile.exists()) {
+        await targetFile.delete();
+      }
+      await renderedFile.copy(requestedPath);
+    } finally {
+      if (await _outputDirectory.exists()) {
+        await _outputDirectory.delete(recursive: true);
+      }
+    }
+  }
+
+  Future<void> dispose() async {
+    _timer?.cancel();
+    _timer = null;
+    await _pendingCapture;
+  }
+
+  Future<void> _captureOnce() async {
+    if (_captureInFlight) {
+      return;
+    }
+    _captureInFlight = true;
+    try {
+      final frameBuffer = await videoTrack.captureFrame();
+      final frameBytes = frameBuffer.asUint8List();
+      if (frameBytes.isEmpty) {
+        return;
+      }
+
+      final frameFile = File(
+        '${_outputDirectory.path}${Platform.pathSeparator}${_frameIndex.toString().padLeft(6, '0')}.png',
+      );
+      await frameFile.writeAsBytes(frameBytes, flush: false);
+      _frameIndex += 1;
+    } catch (error) {
+      if (_frameIndex == 0) {
+        throw StateError('Unable to capture Windows recording frames: $error');
+      }
+    } finally {
+      _captureInFlight = false;
+    }
   }
 }

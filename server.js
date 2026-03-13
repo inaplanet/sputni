@@ -68,6 +68,17 @@ function removePeer(ws) {
   console.log(`Peer disconnected: ${peerId || "unknown"} from room ${roomId || "unknown"}`);
 }
 
+function replaceRoomPeer(room, existingSocket) {
+  if (!room.has(existingSocket)) return;
+  try {
+    existingSocket.close(4000, "Replaced by a newer session");
+  } catch (err) {
+    console.error("Failed to close replaced socket:", err);
+  } finally {
+    removePeer(existingSocket);
+  }
+}
+
 wss.on("connection", (ws, req) => {
   console.log("New WS connection");
 
@@ -114,15 +125,14 @@ wss.on("connection", (ws, req) => {
         const room = rooms.get(roomId);
         const roomPeers = [...room].map((client) => peers.get(client)).filter(Boolean);
 
-        if (roomPeers.some((peer) => peer.role === role)) {
-          safeSend(ws, {
-            type: "error",
-            payload: { message: `Room already has an active ${role}` },
-          });
-          return;
+        const existingSameRoleSocket = [...room].find((client) => peers.get(client)?.role === role);
+        if (existingSameRoleSocket) {
+          replaceRoomPeer(room, existingSameRoleSocket);
         }
 
-        if (roomPeers.length >= 2) {
+        const refreshedRoomPeers = [...room].map((client) => peers.get(client)).filter(Boolean);
+
+        if (refreshedRoomPeers.length >= 2) {
           safeSend(ws, {
             type: "error",
             payload: { message: "Room is already full" },
@@ -135,7 +145,7 @@ wss.on("connection", (ws, req) => {
 
         console.log(`Peer joined room=${roomId} peerId=${peerId} role=${role}`);
 
-        for (const peer of roomPeers) {
+        for (const peer of refreshedRoomPeers) {
           safeSend(ws, {
             type: "join",
             payload: {

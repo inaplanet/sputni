@@ -1,5 +1,8 @@
 #include "flutter_window.h"
 
+#include <flutter/method_channel.h>
+#include <flutter/standard_method_codec.h>
+
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
@@ -25,6 +28,20 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+
+  native_windows_recorder_ = std::make_unique<NativeWindowsRecorder>();
+  native_recording_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(),
+          "teleck/native_recording",
+          &flutter::StandardMethodCodec::GetInstance());
+  native_recording_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<
+                 flutter::MethodResult<flutter::EncodableValue>> result) {
+        native_windows_recorder_->HandleMethodCall(call, std::move(result));
+      });
+
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -40,6 +57,9 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  native_recording_channel_ = nullptr;
+  native_windows_recorder_ = nullptr;
+
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
